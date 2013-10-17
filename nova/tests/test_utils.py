@@ -17,7 +17,6 @@
 import __builtin__
 import datetime
 import functools
-import hashlib
 import importlib
 import os
 import os.path
@@ -248,13 +247,6 @@ class GenericUtilsTestCase(test.NoDBTestCase):
         self.assertEqual('&gt;', utils.xhtml_escape('>'))
         self.assertEqual('&lt;', utils.xhtml_escape('<'))
         self.assertEqual('&lt;foo&gt;', utils.xhtml_escape('<foo>'))
-
-    def test_hash_file(self):
-        data = 'Mary had a little lamb, its fleece as white as snow'
-        flo = StringIO.StringIO(data)
-        h1 = utils.hash_file(flo)
-        h2 = hashlib.sha1(data).hexdigest()
-        self.assertEquals(h1, h2)
 
     def test_is_valid_ipv4(self):
         self.assertTrue(utils.is_valid_ipv4('127.0.0.1'))
@@ -872,7 +864,7 @@ class GetSystemMetadataFromImageTestCase(test.NoDBTestCase):
         # Verify that the empty properties have not been inherited
         for key in utils.SM_INHERITABLE_KEYS:
             sys_key = "%s%s" % (utils.SM_IMAGE_PROP_PREFIX, key)
-            self.assertTrue(sys_key not in sys_meta)
+            self.assertNotIn(sys_key, sys_meta)
 
 
 class GetImageFromSystemMetadataTestCase(test.NoDBTestCase):
@@ -916,7 +908,7 @@ class GetImageFromSystemMetadataTestCase(test.NoDBTestCase):
 
         # Verify that the empty properties have not been inherited
         for key in utils.SM_INHERITABLE_KEYS:
-            self.assertTrue(key not in image)
+            self.assertNotIn(key, image)
 
     def test_non_inheritable_image_properties(self):
         sys_meta = self.get_system_metadata()
@@ -927,4 +919,4 @@ class GetImageFromSystemMetadataTestCase(test.NoDBTestCase):
         image = utils.get_image_from_system_metadata(sys_meta)
 
         # Verify that the foo1 key has not been inherited
-        self.assertTrue("foo1" not in image)
+        self.assertNotIn("foo1", image)

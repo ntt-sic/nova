@@ -392,6 +392,10 @@ class ComputeServiceUnavailable(ServiceUnavailable):
     msg_fmt = _("Compute service of %(host)s is unavailable at this time.")
 
 
+class ComputeServiceInUse(NovaException):
+    msg_fmt = _("Compute service of %(host)s is still in use.")
+
+
 class UnableToMigrateToSelf(Invalid):
     msg_fmt = _("Unable to migrate instance (%(instance_id)s) "
                 "to current host (%(host)s).")
@@ -575,6 +579,10 @@ class NoNetworksFound(NotFound):
     msg_fmt = _("No networks defined.")
 
 
+class NoMoreNetworks(NovaException):
+    msg_fmt = _("No more available networks.")
+
+
 class NetworkNotFoundForProject(NotFound):
     msg_fmt = _("Either Network uuid %(network_uuid)s is not present or "
                 "is not assigned to the project %(project_id)s.")
@@ -659,7 +667,7 @@ class FloatingIpExists(NovaException):
 
 
 class FloatingIpNotFound(NotFound):
-    ec2_code = "UnsupportedOpperation"
+    ec2_code = "UnsupportedOperation"
     msg_fmt = _("Floating ip not found for id %(id)s.")
 
 
@@ -690,7 +698,7 @@ class NoMoreFloatingIps(FloatingIpNotFound):
 
 
 class FloatingIpAssociated(NovaException):
-    ec2_code = "UnsupportedOpperation"
+    ec2_code = "UnsupportedOperation"
     msg_fmt = _("Floating ip %(address)s is associated.")
 
 
@@ -703,12 +711,12 @@ class NoFloatingIpsDefined(NotFound):
 
 
 class NoFloatingIpInterface(NotFound):
-    ec2_code = "UnsupportedOpperation"
+    ec2_code = "UnsupportedOperation"
     msg_fmt = _("Interface %(interface)s not found.")
 
 
 class CannotDisassociateAutoAssignedFloatingIP(NovaException):
-    ec2_code = "UnsupportedOpperation"
+    ec2_code = "UnsupportedOperation"
     msg_fmt = _("Cannot disassociate auto assigned floating ip")
 
 

@@ -26,6 +26,7 @@ helpers for populating up config object instances.
 """
 
 from nova import exception
+from nova.openstack.common.gettextutils import _
 from nova.openstack.common import log as logging
 
 from lxml import etree
@@ -67,7 +68,7 @@ class LibvirtConfigObject(object):
     def to_xml(self, pretty_print=True):
         root = self.format_dom()
         xml_str = etree.tostring(root, pretty_print=pretty_print)
-        LOG.debug("Generated XML %s " % (xml_str,))
+        LOG.debug(_("Generated XML %s "), (xml_str,))
         return xml_str
 
 
@@ -1051,7 +1052,7 @@ class LibvirtConfigGuest(LibvirtConfigObject):
         self.os_cmdline = None
         self.os_root = None
         self.os_init_path = None
-        self.os_boot_dev = None
+        self.os_boot_dev = []
         self.os_smbios = None
         self.devices = []
 
@@ -1081,8 +1082,10 @@ class LibvirtConfigGuest(LibvirtConfigObject):
             os.append(self._text_node("root", self.os_root))
         if self.os_init_path is not None:
             os.append(self._text_node("init", self.os_init_path))
-        if self.os_boot_dev is not None:
-            os.append(etree.Element("boot", dev=self.os_boot_dev))
+
+        for boot_dev in self.os_boot_dev:
+            os.append(etree.Element("boot", dev=boot_dev))
+
         if self.os_smbios is not None:
             os.append(self.os_smbios.format_dom())
         root.append(os)

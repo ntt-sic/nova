@@ -610,7 +610,7 @@ class ServersControllerTest(ControllerTest):
     def test_get_servers_with_too_big_limit(self):
         req = fakes.HTTPRequestV3.blank('/servers?limit=30')
         res_dict = self.controller.index(req)
-        self.assertTrue('servers_links' not in res_dict)
+        self.assertNotIn('servers_links', res_dict)
 
     def test_get_servers_with_bad_limit(self):
         req = fakes.HTTPRequestV3.blank('/servers?limit=asdf')
@@ -714,7 +714,7 @@ class ServersControllerTest(ControllerTest):
                          sort_dir='desc', limit=None, marker=None,
                          columns_to_join=None):
             self.assertNotEqual(filters, None)
-            self.assertTrue('project_id' not in filters)
+            self.assertNotIn('project_id', filters)
             return [fakes.stub_instance(100)]
 
         self.stubs.Set(db, 'instance_get_all_by_filters',
@@ -895,7 +895,7 @@ class ServersControllerTest(ControllerTest):
             changes_since = datetime.datetime(2011, 1, 24, 17, 8, 1,
                                               tzinfo=iso8601.iso8601.UTC)
             self.assertEqual(search_opts['changes-since'], changes_since)
-            self.assertTrue('deleted' not in search_opts)
+            self.assertNotIn('deleted', search_opts)
             db_list = [fakes.stub_instance(100, uuid=server_uuid)]
             return instance_obj._make_instance_list(
                 context, instance_obj.InstanceList(), db_list, FIELDS)
@@ -931,7 +931,7 @@ class ServersControllerTest(ControllerTest):
             # OSAPI converts status to vm_state
             self.assertTrue('vm_state' in search_opts)
             # Allowed only by admins with admin API on
-            self.assertFalse('unknown_option' in search_opts)
+            self.assertNotIn('unknown_option', search_opts)
             db_list = [fakes.stub_instance(100, uuid=server_uuid)]
             return instance_obj._make_instance_list(
                 context, instance_obj.InstanceList(), db_list, FIELDS)
@@ -1761,7 +1761,7 @@ class ServersControllerCreateTest(test.TestCase):
 
     def _check_admin_pass_missing(self, server_dict):
         """utility function - check server_dict for absence of admin_pass."""
-        self.assertTrue("admin_pass" not in server_dict)
+        self.assertNotIn("admin_pass", server_dict)
 
     def _test_create_instance(self, flavor=2):
         image_uuid = 'c905cedb-7281-47e4-8a62-f26bc5fc4c77'
@@ -2288,6 +2288,19 @@ class ServersControllerCreateTest(test.TestCase):
 
         self.stubs.Set(compute_api.API, 'create', fake_create)
         self.assertRaises(webob.exc.HTTPBadRequest,
+                          self._test_create_extra, params)
+
+    def test_create_instance_with_neutronv2_port_not_found(self):
+        network = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+        port = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'
+        requested_networks = [{'uuid': network, 'port': port}]
+        params = {'networks': requested_networks}
+
+        def fake_create(*args, **kwargs):
+            raise exception.PortNotFound(port_id=port)
+
+        self.stubs.Set(compute_api.API, 'create', fake_create)
+        self.assertRaises(webob.exc.HTTPNotFound,
                           self._test_create_extra, params)
 
 
@@ -3042,7 +3055,7 @@ class ServersViewBuilderTest(test.TestCase):
         bookmark_link = "http://localhost/servers/%s" % self.uuid
 
         output = self.view_builder.show(self.request, self.instance)
-        self.assertFalse('fault' in output['server'])
+        self.assertNotIn('fault', output['server'])
 
     def test_build_server_detail_active_status(self):
         #set the power state of the instance to running
@@ -4411,3 +4424,30 @@ class ServersUnprocessableEntityTestCase(test.TestCase):
     def test_create_update_malformed_entity(self):
         body = {'server': 'string'}
         self._unprocessable_server_update(body=body)
+
+
+class TestServerRebuildXMLDeserializer(test.TestCase):
+
+    def setUp(self):
+        super(TestServerRebuildXMLDeserializer, self).setUp()
+        self.deserializer = servers.ActionDeserializer(None)
+
+    def test_rebuild_with_access_ip(self):
+        serial_request = """<?xml version="1.0" encoding="UTF-8"?>
+                <rebuild
+                    xmlns="http://docs.openstack.org/compute/api/v1.1"
+                    name="new-server-test"
+                    image_ref="http://localhost/images/1"
+                    access_ip_v4="1.2.3.4"
+                    access_ip_v6="fe80::">
+                </rebuild>"""
+        request = self.deserializer.deserialize(serial_request, 'action')
+        expected = {
+            "rebuild": {
+                "name": "new-server-test",
+                "image_ref": "http://localhost/images/1",
+                'access_ip_v4': '1.2.3.4',
+                'access_ip_v6': 'fe80::'
+            },
+        }
+        self.assertThat(request['body'], matchers.DictMatches(expected))

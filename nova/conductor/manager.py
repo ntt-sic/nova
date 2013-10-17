@@ -14,8 +14,6 @@
 
 """Handles database requests from other nova services."""
 
-import copy
-
 from nova.api.ec2 import ec2utils
 from nova import block_device
 from nova.cells import rpcapi as cells_rpcapi
@@ -76,7 +74,7 @@ class ConductorManager(manager.Manager):
     namespace.  See the ComputeTaskManager class for details.
     """
 
-    RPC_API_VERSION = '1.58'
+    RPC_API_VERSION = '1.60'
 
     def __init__(self, *args, **kwargs):
         super(ConductorManager, self).__init__(service_name='conductor',
@@ -220,6 +218,8 @@ class ConductorManager(manager.Manager):
                                                    host, key)
         return jsonutils.to_primitive(aggregates)
 
+    # NOTE(danms): This method is now deprecated and can be removed in
+    # version 2.0 of the RPC API
     def aggregate_metadata_add(self, context, aggregate, metadata,
                                set_delete=False):
         new_metadata = self.db.aggregate_metadata_add(context.elevated(),
@@ -227,6 +227,8 @@ class ConductorManager(manager.Manager):
                                                       metadata, set_delete)
         return jsonutils.to_primitive(new_metadata)
 
+    # NOTE(danms): This method is now deprecated and can be removed in
+    # version 2.0 of the RPC API
     @rpc_common.client_exceptions(exception.AggregateMetadataNotFound)
     def aggregate_metadata_delete(self, context, aggregate, key):
         self.db.aggregate_metadata_delete(context.elevated(),
@@ -370,6 +372,8 @@ class ConductorManager(manager.Manager):
     def instance_info_cache_delete(self, context, instance):
         self.db.instance_info_cache_delete(context, instance['uuid'])
 
+    # NOTE(hanlind): This method is now deprecated and can be removed in
+    # version v2.0 of the RPC API.
     def instance_info_cache_update(self, context, instance, values):
         self.db.instance_info_cache_update(context, instance['uuid'],
                                            values)
@@ -578,19 +582,20 @@ class ConductorManager(manager.Manager):
 
     def object_action(self, context, objinst, objmethod, args, kwargs):
         """Perform an action on an object."""
-        oldobj = copy.copy(objinst)
+        oldobj = objinst.obj_clone()
         result = self._object_dispatch(objinst, objmethod, context,
                                        args, kwargs)
         updates = dict()
         # NOTE(danms): Diff the object with the one passed to us and
         # generate a list of changes to forward back
-        for field in objinst.fields:
-            if not objinst.obj_attr_is_set(field):
+        for name, field in objinst.fields.items():
+            if not objinst.obj_attr_is_set(name):
                 # Avoid demand-loading anything
                 continue
-            if (not oldobj.obj_attr_is_set(field) or
-                    oldobj[field] != objinst[field]):
-                updates[field] = objinst._attr_to_primitive(field)
+            if (not oldobj.obj_attr_is_set(name) or
+                    oldobj[name] != objinst[name]):
+                updates[name] = field.to_primitive(objinst, name,
+                                                   objinst[name])
         # This is safe since a field named this would conflict with the
         # method anyway
         updates['obj_what_changed'] = objinst.obj_what_changed()

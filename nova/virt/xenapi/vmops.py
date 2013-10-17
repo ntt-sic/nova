@@ -21,7 +21,6 @@ Management class for VM-related functions (spawn, reboot, etc).
 
 import base64
 import functools
-import itertools
 import time
 import zlib
 
@@ -38,6 +37,7 @@ from nova.compute import vm_mode
 from nova.compute import vm_states
 from nova import context as nova_context
 from nova import exception
+from nova.objects import aggregate as aggregate_obj
 from nova.openstack.common import excutils
 from nova.openstack.common.gettextutils import _
 from nova.openstack.common import importutils
@@ -97,21 +97,6 @@ DEVICE_EPHEMERAL = '4'
 # Note(johngarbutt) Currently don't support ISO boot during rescue
 # and we must have the ISO visible before the PV drivers start
 DEVICE_CD = '1'
-
-
-def cmp_version(a, b):
-    """Compare two version strings (eg 0.0.1.10 > 0.0.1.9)."""
-    a = a.split('.')
-    b = b.split('.')
-
-    # Compare each individual portion of both version strings
-    for va, vb in zip(a, b):
-        ret = int(va) - int(vb)
-        if ret:
-            return ret
-
-    # Fallback to comparing length last
-    return len(a) - len(b)
 
 
 def make_step_decorator(context, instance, update_instance_progress):
@@ -245,7 +230,8 @@ class VMOps(object):
                                                  power_on)
 
     def _restore_orig_vm_and_cleanup_orphan(self, instance,
-                                            block_device_info, power_on=True):
+                                            block_device_info=None,
+                                            power_on=True):
         # NOTE(sirp): the original vm was suffixed with '-orig'; find it using
         # the old suffix, remove the suffix, then power it back on.
         name_label = self._get_orig_vm_name_label(instance)
@@ -268,7 +254,7 @@ class VMOps(object):
             # We crashed before the -orig backup was made
             vm_ref = new_ref
 
-        if power_on:
+        if power_on and vm_utils.is_vm_shutdown(self._session, vm_ref):
             self._start(instance, vm_ref)
 
     def finish_migration(self, context, migration, instance, disk_info,
@@ -386,10 +372,10 @@ class VMOps(object):
             return kernel_file, ramdisk_file
 
         @step
-        def create_vm_record_step(undo_mgr, vdis, disk_image_type,
-                kernel_file, ramdisk_file):
+        def create_vm_record_step(undo_mgr, disk_image_type,
+                                  kernel_file, ramdisk_file):
             vm_ref = self._create_vm_record(context, instance, name_label,
-                    vdis, disk_image_type, kernel_file, ramdisk_file)
+                    disk_image_type, kernel_file, ramdisk_file)
 
             def undo_create_vm():
                 self._destroy(instance, vm_ref, network_info=network_info)
@@ -418,7 +404,7 @@ class VMOps(object):
                 self._resize_up_root_vdi(instance, root_vdi)
 
             self._attach_disks(instance, vm_ref, name_label, vdis,
-                               disk_image_type, admin_password,
+                               disk_image_type, network_info, admin_password,
                                injected_files)
             if not first_boot:
                 self._attach_mapped_block_devices(instance,
@@ -443,6 +429,8 @@ class VMOps(object):
         def inject_instance_data_step(undo_mgr, vm_ref, vdis):
             self._inject_instance_metadata(instance, vm_ref)
             self._inject_auto_disk_config(instance, vm_ref)
+            # NOTE: We add the hostname here so windows PV tools
+            # can pick it up during booting
             if first_boot:
                 self._inject_hostname(instance, vm_ref, rescue)
             self._file_inject_vm_settings(instance, vm_ref, vdis, network_info)
@@ -483,7 +471,7 @@ class VMOps(object):
                                      name_label)
             kernel_file, ramdisk_file = create_kernel_ramdisk_step(undo_mgr)
 
-            vm_ref = create_vm_record_step(undo_mgr, vdis, disk_image_type,
+            vm_ref = create_vm_record_step(undo_mgr, disk_image_type,
                     kernel_file, ramdisk_file)
             attach_disks_step(undo_mgr, vm_ref, vdis, disk_image_type)
 
@@ -524,43 +512,29 @@ class VMOps(object):
         if not vm_utils.is_enough_free_mem(self._session, instance):
             raise exception.InsufficientFreeMemory(uuid=instance['uuid'])
 
-    def _create_vm_record(self, context, instance, name_label, vdis,
-            disk_image_type, kernel_file, ramdisk_file):
+    def _create_vm_record(self, context, instance, name_label,
+                          disk_image_type, kernel_file, ramdisk_file):
         """Create the VM record in Xen, making sure that we do not create
         a duplicate name-label.  Also do a rough sanity check on memory
         to try to short-circuit a potential failure later.  (The memory
         check only accounts for running VMs, so it can miss other builds
         that are in progress.)
         """
-        mode = self._determine_vm_mode(instance, vdis, disk_image_type)
+        mode = vm_utils.determine_vm_mode(instance, disk_image_type)
         if instance['vm_mode'] != mode:
             # Update database with normalized (or determined) value
             self._virtapi.instance_update(context,
                                           instance['uuid'], {'vm_mode': mode})
 
         use_pv_kernel = (mode == vm_mode.XEN)
+        LOG.debug(_("Using PV kernel: %s") % use_pv_kernel, instance=instance)
         vm_ref = vm_utils.create_vm(self._session, instance, name_label,
                                     kernel_file, ramdisk_file, use_pv_kernel)
         return vm_ref
 
-    def _determine_vm_mode(self, instance, vdis, disk_image_type):
-        current_mode = vm_mode.get_from_instance(instance)
-        if current_mode == vm_mode.XEN or current_mode == vm_mode.HVM:
-            return current_mode
-
-        is_pv = False
-        if 'root' in vdis:
-            os_type = instance['os_type']
-            vdi_ref = vdis['root']['ref']
-            is_pv = vm_utils.determine_is_pv(self._session, vdi_ref,
-                                             disk_image_type, os_type)
-        if is_pv:
-            return vm_mode.XEN
-        else:
-            return vm_mode.HVM
-
     def _attach_disks(self, instance, vm_ref, name_label, vdis,
-                      disk_image_type, admin_password=None, files=None):
+                      disk_image_type, network_info,
+                      admin_password=None, files=None):
         ctx = nova_context.get_admin_context()
         instance_type = flavors.extract_flavor(instance)
 
@@ -619,6 +593,7 @@ class VMOps(object):
         if configdrive.required_by(instance):
             vm_utils.generate_configdrive(self._session, instance, vm_ref,
                                           DEVICE_CONFIGDRIVE,
+                                          network_info,
                                           admin_password=admin_password,
                                           files=files)
 
@@ -634,50 +609,33 @@ class VMOps(object):
 
     def _configure_new_instance_with_agent(self, instance, vm_ref,
                                            injected_files, admin_password):
-        if self.agent_enabled(instance):
-            ctx = nova_context.get_admin_context()
-            agent_build = self._virtapi.agent_build_get_by_triple(
-                ctx, 'xen', instance['os_type'], instance['architecture'])
-            if agent_build:
-                LOG.info(_('Latest agent build for %(hypervisor)s/%(os)s'
-                           '/%(architecture)s is %(version)s') % agent_build)
-            else:
-                LOG.info(_('No agent build found for %(hypervisor)s/%(os)s'
-                           '/%(architecture)s') % {
-                            'hypervisor': 'xen',
-                            'os': instance['os_type'],
-                            'architecture': instance['architecture']})
+        if not self.agent_enabled(instance):
+            LOG.debug(_("Skip agent setup, not enabled."), instance=instance)
+            return
 
-            # Update agent, if necessary
-            # This also waits until the agent starts
-            agent = self._get_agent(instance, vm_ref)
-            version = agent.get_agent_version()
-            if version:
-                LOG.info(_('Instance agent version: %s'), version,
-                         instance=instance)
+        agent = self._get_agent(instance, vm_ref)
 
-            if (version and agent_build and
-                    cmp_version(version, agent_build['version']) < 0):
-                agent.agent_update(agent_build)
+        version = agent.get_version()
+        if not version:
+            LOG.debug(_("Skip agent setup, unable to contact agent."),
+                      instance=instance)
+            return
 
-            # if the guest agent is not available, configure the
-            # instance, but skip the admin password configuration
-            no_agent = version is None
+        LOG.debug(_('Detected agent version: %s'), version, instance=instance)
 
-            # Inject ssh key.
-            agent.inject_ssh_key()
+        # NOTE(johngarbutt) the agent object allows all of
+        # the following steps to silently fail
+        agent.update_if_needed(version)
 
-            # Inject files, if necessary
-            if injected_files:
-                # Inject any files, if specified
-                agent.inject_files(injected_files)
+        agent.inject_ssh_key()
 
-            # Set admin password, if necessary
-            if admin_password and not no_agent:
-                agent.set_admin_password(admin_password)
+        if injected_files:
+            agent.inject_files(injected_files)
 
-            # Reset network config
-            agent.resetnetwork()
+        if admin_password:
+            agent.set_admin_password(admin_password)
+
+        agent.resetnetwork()
 
     def _prepare_instance_filter(self, instance, network_info):
         try:
@@ -818,7 +776,7 @@ class VMOps(object):
 
             def restore_orig_vm():
                 # Do not need to restore block devices, not yet been removed
-                self._restore_orig_vm_and_cleanup_orphan(instance, None)
+                self._restore_orig_vm_and_cleanup_orphan(instance)
 
             undo_mgr.undo_with(restore_orig_vm)
 
@@ -862,42 +820,55 @@ class VMOps(object):
 
     def _migrate_disk_resizing_up(self, context, instance, dest, vm_ref,
                                   sr_path):
-        self._apply_orig_vm_name_label(instance, vm_ref)
+        step = make_step_decorator(context, instance,
+                                   self._update_instance_progress)
 
-        # 1. Create Snapshot
-        label = "%s-snapshot" % instance['name']
-        with vm_utils.snapshot_attached_here(
-                self._session, instance, vm_ref, label) as vdi_uuids:
-            self._update_instance_progress(context, instance,
-                                           step=1,
-                                           total_steps=RESIZE_TOTAL_STEPS)
+        @step
+        def fake_step_to_show_snapshot_complete():
+            pass
 
-            # 2. Transfer the immutable VHDs (base-copies)
-            #
-            # The first VHD will be the leaf (aka COW) that is being used by
-            # the VM. For this step, we're only interested in the immutable
-            # VHDs which are all of the parents of the leaf VHD.
-            for seq_num, vdi_uuid in itertools.islice(
-                    enumerate(vdi_uuids), 1, None):
-                self._migrate_vhd(instance, vdi_uuid, dest, sr_path, seq_num)
-                self._update_instance_progress(context, instance,
-                                               step=2,
-                                               total_steps=RESIZE_TOTAL_STEPS)
+        @step
+        def transfer_immutable_vhds(parent_vdi_uuids):
+            for vhd_num, vdi_uuid in enumerate(parent_vdi_uuids, start=1):
+                self._migrate_vhd(instance, vdi_uuid, dest, sr_path, vhd_num)
 
-            # 3. Now power down the instance
+        @step
+        def power_down_instance():
             self._resize_ensure_vm_is_shutdown(instance, vm_ref)
-            self._update_instance_progress(context, instance,
-                                           step=3,
-                                           total_steps=RESIZE_TOTAL_STEPS)
 
-            # 4. Transfer the COW VHD
-            vdi_ref, vm_vdi_rec = vm_utils.get_vdi_for_vm_safely(
-                self._session, vm_ref)
-            cow_uuid = vm_vdi_rec['uuid']
-            self._migrate_vhd(instance, cow_uuid, dest, sr_path, 0)
-            self._update_instance_progress(context, instance,
-                                           step=4,
-                                           total_steps=RESIZE_TOTAL_STEPS)
+        @step
+        def transfer_leaf_vhd(leaf_vdi_uuid):
+            self._migrate_vhd(instance, leaf_vdi_uuid, dest, sr_path, 0)
+
+        @step
+        def fake_step_to_be_executed_by_finish_migration():
+            pass
+
+        self._apply_orig_vm_name_label(instance, vm_ref)
+        try:
+            label = "%s-snapshot" % instance['name']
+            with vm_utils.snapshot_attached_here(
+                    self._session, instance, vm_ref, label) as vdi_uuids:
+                fake_step_to_show_snapshot_complete()
+
+                active_vdi_uuid = vdi_uuids[0]
+                immutable_vdi_uuids = vdi_uuids[1:]
+
+                transfer_immutable_vhds(immutable_vdi_uuids)
+                power_down_instance()
+                transfer_leaf_vhd(active_vdi_uuid)
+        except Exception as error:
+            LOG.exception(_("_migrate_disk_resizing_up failed. "
+                            "Restoring orig vm due_to: %s."), error,
+                          instance=instance)
+            try:
+                self._restore_orig_vm_and_cleanup_orphan(instance)
+                #TODO(johngarbutt) should also cleanup VHDs at destination
+            except Exception as rollback_error:
+                LOG.warn(_("_migrate_disk_resizing_up failed to "
+                           "rollback: %s"), rollback_error,
+                         instance=instance)
+            raise exception.InstanceFaultRollback(error)
 
     def _apply_orig_vm_name_label(self, instance, vm_ref):
         # NOTE(sirp): in case we're resizing to the same host (for dev
@@ -1592,12 +1563,14 @@ class VMOps(object):
             for vif in network_info:
                 self.vif_driver.unplug(instance, vif)
 
-    def reset_network(self, instance):
+    def reset_network(self, instance, rescue=False):
         """Calls resetnetwork method in agent."""
         if self.agent_enabled(instance):
             vm_ref = self._get_vm_opaque_ref(instance)
             agent = self._get_agent(instance, vm_ref)
+            self._inject_hostname(instance, vm_ref, rescue)
             agent.resetnetwork()
+            self._remove_hostname(instance, vm_ref)
         else:
             raise NotImplementedError()
 
@@ -1611,12 +1584,23 @@ class VMOps(object):
             # NOTE(jk0): Windows hostnames can only be <= 15 chars.
             hostname = hostname[:15]
 
-        LOG.debug(_("Injecting hostname to xenstore"), instance=instance)
-        self._add_to_param_xenstore(vm_ref, 'vm-data/hostname', hostname)
+        LOG.debug(_("Injecting hostname (%s) into xenstore") % hostname,
+                  instance=instance)
+
+        @utils.synchronized('xenstore-' + instance['uuid'])
+        def update_hostname():
+            self._add_to_param_xenstore(vm_ref, 'vm-data/hostname', hostname)
+
+        update_hostname()
 
     def _remove_hostname(self, instance, vm_ref):
         LOG.debug(_("Removing hostname from xenstore"), instance=instance)
-        self._remove_from_param_xenstore(vm_ref, 'vm-data/hostname')
+
+        @utils.synchronized('xenstore-' + instance['uuid'])
+        def update_hostname():
+            self._remove_from_param_xenstore(vm_ref, 'vm-data/hostname')
+
+        update_hostname()
 
     def _write_to_xenstore(self, instance, path, value, vm_ref=None):
         """
@@ -1711,12 +1695,12 @@ class VMOps(object):
                                                network_info=network_info)
 
     def _get_host_uuid_from_aggregate(self, context, hostname):
-        current_aggregate = self._virtapi.aggregate_get_by_host(
+        current_aggregate = aggregate_obj.AggregateList.get_by_host(
             context, CONF.host, key=pool_states.POOL_FLAG)[0]
         if not current_aggregate:
             raise exception.AggregateHostNotFound(host=CONF.host)
         try:
-            return current_aggregate.metadetails[hostname]
+            return current_aggregate.metadata[hostname]
         except KeyError:
             reason = _('Destination host:%s must be in the same '
                        'aggregate as the source server') % hostname
@@ -1826,7 +1810,7 @@ class VMOps(object):
             # iSCSI VBDs
             if not self._is_xsm_sr_check_relaxed():
                 raise exception.MigrationError(_('XAPI supporting '
-                                'relax-xsm-sr-check=true requried'))
+                                'relax-xsm-sr-check=true required'))
 
         if 'migrate_data' in dest_check_data:
             vm_ref = self._get_vm_opaque_ref(instance_ref)

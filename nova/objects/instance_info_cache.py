@@ -17,7 +17,7 @@ from nova.cells import rpcapi as cells_rpcapi
 from nova import db
 from nova import exception
 from nova.objects import base
-from nova.objects import utils
+from nova.objects import fields
 from nova.openstack.common.gettextutils import _
 from nova.openstack.common import log as logging
 
@@ -33,14 +33,9 @@ class InstanceInfoCache(base.NovaPersistentObject, base.NovaObject):
     VERSION = '1.4'
 
     fields = {
-        'instance_uuid': utils.str_value,
-        'network_info': utils.network_model_or_none,
+        'instance_uuid': fields.UUIDField(),
+        'network_info': fields.Field(fields.NetworkModel(), nullable=True),
         }
-
-    def _attr_network_info_to_primitive(self):
-        if self.network_info is None:
-            return None
-        return self.network_info.json()
 
     @staticmethod
     def _from_db_object(context, info_cache, db_obj):
@@ -88,7 +83,8 @@ class InstanceInfoCache(base.NovaPersistentObject, base.NovaObject):
     @base.remotable
     def save(self, context, update_cells=True):
         if 'network_info' in self.obj_what_changed():
-            nw_info_json = self._attr_network_info_to_primitive()
+            nw_info_json = self.fields['network_info'].to_primitive(
+                self, 'network_info', self.network_info)
             rv = db.instance_info_cache_update(context, self.instance_uuid,
                                                {'network_info': nw_info_json})
             if update_cells and rv:

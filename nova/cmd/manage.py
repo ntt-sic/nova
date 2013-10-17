@@ -55,10 +55,10 @@
 
 from __future__ import print_function
 
-import netaddr
 import os
 import sys
 
+import netaddr
 from oslo.config import cfg
 
 from nova.api.ec2 import ec2utils
@@ -1097,7 +1097,7 @@ class AgentBuildCommands(object):
                              agent_build.version, agent_build.md5hash))
                 print('    %s' % agent_build.url)
 
-            print
+            print()
 
     @args('--os', metavar='<os>', help='os')
     @args('--architecture', dest='architecture',

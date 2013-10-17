@@ -99,15 +99,6 @@ vmwareapi_opts = [
                deprecated_name='vnc_port_total',
                deprecated_group='DEFAULT',
                help='Total number of VNC ports'),
-    # Deprecated, remove in Icehouse
-    cfg.StrOpt('vnc_password',
-               deprecated_name='vnc_password',
-               deprecated_group='DEFAULT',
-               help='DEPRECATED. VNC password. The password-based access to '
-                    'VNC consoles will be removed in the next release. The '
-                    'default value will disable password protection on the '
-                    'VNC console.',
-               secret=True),
     cfg.BoolOpt('use_linked_clone',
                 default=True,
                 deprecated_name='use_linked_clone',
@@ -265,7 +256,7 @@ class VMwareESXDriver(driver.ComputeDriver):
 
     def get_diagnostics(self, instance):
         """Return data about VM diagnostics."""
-        return self._vmops.get_info(instance)
+        return self._vmops.get_diagnostics(instance)
 
     def get_console_output(self, instance):
         """Return snapshot of console."""
@@ -716,7 +707,7 @@ class VMwareVCDriver(VMwareESXDriver):
     def get_diagnostics(self, instance):
         """Return data about VM diagnostics."""
         _vmops = self._get_vmops_for_compute_node(instance['node'])
-        return _vmops.get_info(instance)
+        return _vmops.get_diagnostics(instance)
 
     def inject_network_info(self, instance, network_info):
         """inject network info for specified instance."""

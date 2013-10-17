@@ -593,7 +593,7 @@ class ServersControllerTest(ControllerTest):
     def test_get_servers_with_too_big_limit(self):
         req = fakes.HTTPRequest.blank('/fake/servers?limit=30')
         res_dict = self.controller.index(req)
-        self.assertTrue('servers_links' not in res_dict)
+        self.assertNotIn('servers_links', res_dict)
 
     def test_get_servers_with_bad_limit(self):
         req = fakes.HTTPRequest.blank('/fake/servers?limit=asdf')
@@ -697,7 +697,7 @@ class ServersControllerTest(ControllerTest):
                          sort_dir='desc', limit=None, marker=None,
                          columns_to_join=None):
             self.assertNotEqual(filters, None)
-            self.assertTrue('project_id' not in filters)
+            self.assertNotIn('project_id', filters)
             return [fakes.stub_instance(100)]
 
         self.stubs.Set(db, 'instance_get_all_by_filters',
@@ -878,7 +878,7 @@ class ServersControllerTest(ControllerTest):
             changes_since = datetime.datetime(2011, 1, 24, 17, 8, 1,
                                               tzinfo=iso8601.iso8601.UTC)
             self.assertEqual(search_opts['changes-since'], changes_since)
-            self.assertTrue('deleted' not in search_opts)
+            self.assertNotIn('deleted', search_opts)
             db_list = [fakes.stub_instance(100, uuid=server_uuid)]
             return instance_obj._make_instance_list(
                 context, instance_obj.InstanceList(), db_list, FIELDS)
@@ -914,7 +914,7 @@ class ServersControllerTest(ControllerTest):
             # OSAPI converts status to vm_state
             self.assertTrue('vm_state' in search_opts)
             # Allowed only by admins with admin API on
-            self.assertFalse('unknown_option' in search_opts)
+            self.assertNotIn('unknown_option', search_opts)
             db_list = [fakes.stub_instance(100, uuid=server_uuid)]
             return instance_obj._make_instance_list(
                 context, instance_obj.InstanceList(), db_list, FIELDS)
@@ -1691,7 +1691,7 @@ class ServersControllerCreateTest(test.TestCase):
 
     def _check_admin_pass_missing(self, server_dict):
         """utility function - check server_dict for absence of adminPass."""
-        self.assertTrue("adminPass" not in server_dict)
+        self.assertNotIn("adminPass", server_dict)
 
     def _test_create_instance(self, flavor=2):
         image_uuid = 'c905cedb-7281-47e4-8a62-f26bc5fc4c77'
@@ -2196,7 +2196,7 @@ class ServersControllerCreateTest(test.TestCase):
 
         server = res['server']
         self.assertTrue('adminPass' in self.body['server'])
-        self.assertTrue('adminPass' not in server)
+        self.assertNotIn('adminPass', server)
 
     def test_create_instance_admin_pass_empty(self):
         self.body['server']['flavorRef'] = 3,
@@ -2205,36 +2205,6 @@ class ServersControllerCreateTest(test.TestCase):
 
         # The fact that the action doesn't raise is enough validation
         self.controller.create(self.req, self.body)
-
-    def test_create_instance_invalid_personality(self):
-
-        def fake_create(*args, **kwargs):
-            codec = 'utf8'
-            content = 'b25zLiINCg0KLVJpY2hhcmQgQ$$%QQmFjaA=='
-            start_position = 19
-            end_position = 20
-            msg = 'invalid start byte'
-            raise UnicodeDecodeError(codec, content, start_position,
-                                     end_position, msg)
-
-        self.stubs.Set(compute_api.API,
-                       'create',
-                       fake_create)
-
-        self.body['server']['personality'][0]["contents"] = \
-            "b25zLiINCg0KLVJpY2hhcmQgQ$$%QQmFjaA=="
-
-        self.req.body = jsonutils.dumps(self.body)
-        self.assertRaises(webob.exc.HTTPBadRequest,
-                          self.controller.create, self.req, self.body)
-
-    def test_create_location(self):
-        selfhref = 'http://localhost/v2/fake/servers/%s' % FAKE_UUID
-        bookhref = 'http://localhost/fake/servers/%s' % FAKE_UUID
-        self.req.body = jsonutils.dumps(self.body)
-        robj = self.controller.create(self.req, self.body)
-
-        self.assertEqual(robj['Location'], selfhref)
 
     def _do_test_create_instance_above_quota(self, resource, allowed, quota,
                                              expected_msg):
@@ -2930,31 +2900,6 @@ class ServersControllerCreateTest(test.TestCase):
         self.stubs.Set(compute_api.API, 'create', create)
         self._test_create_extra(params)
 
-    def test_create_instance_with_config_drive_disabled(self):
-        config_drive = [{'config_drive': 'foo'}]
-        params = {'config_drive': config_drive}
-        old_create = compute_api.API.create
-
-        def create(*args, **kwargs):
-            self.assertEqual(kwargs['config_drive'], None)
-            return old_create(*args, **kwargs)
-
-        self.stubs.Set(compute_api.API, 'create', create)
-        self._test_create_extra(params)
-
-    def test_create_instance_local_href(self):
-        self.req.body = jsonutils.dumps(self.body)
-        res = self.controller.create(self.req, self.body).obj
-        server = res['server']
-        self.assertEqual(FAKE_UUID, server['id'])
-
-    def test_create_instance_admin_pass_empty(self):
-        self.body['server']['flavorRef'] = 3
-        self.body['server']['adminPass'] = ''
-        self.req.body = jsonutils.dumps(self.body)
-        # The fact that the action doesn't raise is enough validation
-        self.controller.create(self.req, self.body)
-
     def test_create_instance_invalid_personality(self):
 
         def fake_create(*args, **kwargs):
@@ -2978,7 +2923,6 @@ class ServersControllerCreateTest(test.TestCase):
 
     def test_create_location(self):
         selfhref = 'http://localhost/v2/fake/servers/%s' % FAKE_UUID
-        bookhref = 'http://localhost/fake/servers/%s' % FAKE_UUID
         image_href = 'http://localhost/v2/images/%s' % self.image_uuid
         self.body['server']['imageRef'] = image_href
         self.req.body = jsonutils.dumps(self.body)
@@ -3919,7 +3863,7 @@ class ServersViewBuilderTest(test.TestCase):
         self.instance['fault'] = fake_instance.fake_fault_obj(self.uuid)
 
         output = self.view_builder.show(self.request, self.instance)
-        self.assertFalse('fault' in output['server'])
+        self.assertNotIn('fault', output['server'])
 
     def test_build_server_detail_active_status(self):
         #set the power state of the instance to running

@@ -270,8 +270,7 @@ class VMwareVMOps(object):
         # Set the vnc configuration of the instance, vnc port starts from 5900
         if CONF.vnc_enabled:
             vnc_port = self._get_vnc_port(vm_ref)
-            vnc_pass = CONF.vmware.vnc_password or ''
-            self._set_vnc_config(client_factory, instance, vnc_port, vnc_pass)
+            self._set_vnc_config(client_factory, instance, vnc_port)
 
         def _create_virtual_disk():
             """Create a virtual disk of the size of flat vmdk file."""
@@ -1389,14 +1388,14 @@ class VMwareVMOps(object):
         LOG.debug(_("Reconfigured VM instance to set the machine id"),
                   instance=instance)
 
-    def _set_vnc_config(self, client_factory, instance, port, password):
+    def _set_vnc_config(self, client_factory, instance, port):
         """
         Set the vnc configuration of the VM.
         """
         vm_ref = vm_util.get_vm_ref(self._session, instance)
 
         vnc_config_spec = vm_util.get_vnc_config_spec(
-                                      client_factory, port, password)
+                                      client_factory, port)
 
         LOG.debug(_("Reconfiguring VM instance to enable vnc on "
                   "port - %(port)s") % {'port': port},
@@ -1434,22 +1433,6 @@ class VMwareVMOps(object):
         # There is only one default datacenter in a standalone ESX host
         vm_folder_ref = dc_objs.objects[0].propSet[0].val
         return vm_folder_ref
-
-    def _get_res_pool_ref(self):
-        # Get the resource pool. Taking the first resource pool coming our
-        # way. Assuming that is the default resource pool.
-        if self._cluster is None:
-            results = self._session._call_method(vim_util, "get_objects",
-                    "ResourcePool")
-            vm_util._cancel_retrieve_if_necessary(self._session, results)
-            res_pool_ref = results.objects[0].obj
-        else:
-            res_pool_ref = self._session._call_method(vim_util,
-                                                      "get_dynamic_property",
-                                                      self._cluster,
-                                                      "ClusterComputeResource",
-                                                      "resourcePool")
-        return res_pool_ref
 
     def _path_exists(self, ds_browser, ds_path):
         """Check if the path exists on the datastore."""

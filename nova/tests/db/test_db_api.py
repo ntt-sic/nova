@@ -357,7 +357,7 @@ class AggregateDBApiTestCase(test.TestCase):
                 hosts=['bar.openstack.org'], metadata={'badkey': 'bad'})
         r1 = db.aggregate_metadata_get_by_host(ctxt, 'foo.openstack.org')
         self.assertEqual(r1['fake_key1'], set(['fake_value1']))
-        self.assertFalse('badkey' in r1)
+        self.assertNotIn('badkey', r1)
 
     def test_aggregate_metadata_get_by_metadata_key(self):
         ctxt = context.get_admin_context()
@@ -371,7 +371,7 @@ class AggregateDBApiTestCase(test.TestCase):
                                                         'availability_zone')
         self.assertEqual(r1['availability_zone'], set(['az1']))
         self.assertTrue('availability_zone' in r1)
-        self.assertFalse('name' in r1)
+        self.assertNotIn('name', r1)
 
     def test_aggregate_metadata_get_by_host_with_key(self):
         ctxt = context.get_admin_context()
@@ -389,13 +389,13 @@ class AggregateDBApiTestCase(test.TestCase):
         r1 = db.aggregate_metadata_get_by_host(ctxt, 'foo2.openstack.org',
                                                key='good')
         self.assertEqual(r1['good'], set(['value12', 'value23']))
-        self.assertFalse('fake_key1' in r1)
-        self.assertFalse('bad' in r1)
+        self.assertNotIn('fake_key1', r1)
+        self.assertNotIn('bad', r1)
         # Delete metadata
         db.aggregate_metadata_delete(ctxt, a3['id'], 'good')
         r2 = db.aggregate_metadata_get_by_host(ctxt, 'foo.openstack.org',
                                                key='good')
-        self.assertFalse('good' in r2)
+        self.assertNotIn('good', r2)
 
     def test_aggregate_host_get_by_metadata_key(self):
         ctxt = context.get_admin_context()
@@ -416,7 +416,7 @@ class AggregateDBApiTestCase(test.TestCase):
             'foo2.openstack.org': set(['value12', 'value23']),
             'foo3.openstack.org': set(['value23']),
         }, r1)
-        self.assertFalse('fake_key1' in r1)
+        self.assertNotIn('fake_key1', r1)
 
     def test_aggregate_get_by_host_not_found(self):
         ctxt = context.get_admin_context()
@@ -659,6 +659,33 @@ class SqlAlchemyDbApiTestCase(DbTestCase):
         result = sqlalchemy_api._instance_get_all_uuids_by_host(ctxt, 'host1')
         self.assertEqual(2, len(result))
         self.assertEqual(types.UnicodeType, type(result[0]))
+
+    def test_instance_get_active_by_window_joined(self):
+        now = datetime.datetime(2013, 10, 10, 17, 16, 37, 156701)
+        start_time = now - datetime.timedelta(minutes=10)
+        now1 = now + datetime.timedelta(minutes=1)
+        now2 = now + datetime.timedelta(minutes=2)
+        now3 = now + datetime.timedelta(minutes=3)
+        ctxt = context.get_admin_context()
+        self.create_instance_with_args(launched_at=now)
+        self.create_instance_with_args(launched_at=now1, terminated_at=now2)
+        self.create_instance_with_args(launched_at=now2, terminated_at=now3)
+        self.create_instance_with_args(launched_at=now3, terminated_at=None)
+        result = sqlalchemy_api.instance_get_active_by_window_joined(
+            ctxt, begin=now)
+        self.assertEqual(4, len(result))
+        result = sqlalchemy_api.instance_get_active_by_window_joined(
+            ctxt, begin=now3)
+        self.assertEqual(2, len(result))
+        result = sqlalchemy_api.instance_get_active_by_window_joined(
+            ctxt, begin=start_time, end=now)
+        self.assertEqual(0, len(result))
+        result = sqlalchemy_api.instance_get_active_by_window_joined(
+            ctxt, begin=start_time, end=now2)
+        self.assertEqual(2, len(result))
+        result = sqlalchemy_api.instance_get_active_by_window_joined(
+            ctxt, begin=now2, end=now3)
+        self.assertEqual(2, len(result))
 
 
 class MigrationTestCase(test.TestCase):
@@ -1149,11 +1176,13 @@ class SecurityGroupTestCase(test.TestCase, ModelsObjectComparatorMixin):
         real_security_group1 = db.security_group_get_by_name(
                                 self.ctxt,
                                 security_group1['project_id'],
-                                security_group1['name'])
+                                security_group1['name'],
+                                columns_to_join=None)
         real_security_group2 = db.security_group_get_by_name(
                                 self.ctxt,
                                 security_group2['project_id'],
-                                security_group2['name'])
+                                security_group2['name'],
+                                columns_to_join=None)
         self._assertEqualObjects(security_group1, real_security_group1)
         self._assertEqualObjects(security_group2, real_security_group2)
 
@@ -1338,6 +1367,18 @@ class InstanceTestCase(test.TestCase, ModelsObjectComparatorMixin):
         self.assertEqual(inst['access_ip_v6'], '::1')
         for key in dt_keys:
             self.assertEqual(inst[key], dt)
+
+    def test_instance_update_no_metadata_clobber(self):
+        meta = {'foo': 'bar'}
+        sys_meta = {'sfoo': 'sbar'}
+        values = {
+            'metadata': meta,
+            'system_metadata': sys_meta,
+            }
+        inst = db.instance_create(self.ctxt, {})
+        inst = db.instance_update(self.ctxt, inst['uuid'], values)
+        self.assertEqual({'foo': 'bar'}, meta)
+        self.assertEqual({'sfoo': 'sbar'}, sys_meta)
 
     def test_instance_get_all_with_meta(self):
         inst = self.create_instance_with_args()
@@ -1828,11 +1869,11 @@ class InstanceTestCase(test.TestCase, ModelsObjectComparatorMixin):
             self.ctxt, instance['uuid'],
             {'access_ip_v4': netaddr.IPAddress('1.2.3.4'),
              'access_ip_v6': netaddr.IPAddress('::1')})
-        self.assertTrue(isinstance(instance['access_ip_v4'], basestring))
-        self.assertTrue(isinstance(instance['access_ip_v6'], basestring))
+        self.assertIsInstance(instance['access_ip_v4'], basestring)
+        self.assertIsInstance(instance['access_ip_v6'], basestring)
         instance = db.instance_get_by_uuid(self.ctxt, instance['uuid'])
-        self.assertTrue(isinstance(instance['access_ip_v4'], basestring))
-        self.assertTrue(isinstance(instance['access_ip_v6'], basestring))
+        self.assertIsInstance(instance['access_ip_v4'], basestring)
+        self.assertIsInstance(instance['access_ip_v6'], basestring)
 
 
 class InstanceMetadataTestCase(test.TestCase):
@@ -2103,6 +2144,9 @@ class InstanceActionTestCase(test.TestCase, ModelsObjectComparatorMixin):
     def _create_action_values(self, uuid, action='run_instance', ctxt=None):
         if ctxt is None:
             ctxt = self.ctxt
+
+        db.instance_create(ctxt, {'uuid': uuid})
+
         return {
             'action': action,
             'instance_uuid': uuid,
@@ -2372,6 +2416,7 @@ class InstanceFaultTestCase(test.TestCase, ModelsObjectComparatorMixin):
 
         # Create a fault
         fault_values = self._create_fault_values(uuid)
+        db.instance_create(self.ctxt, {'uuid': uuid})
         fault = db.instance_fault_create(self.ctxt, fault_values)
 
         ignored_keys = ['deleted', 'created_at', 'updated_at',
@@ -2391,6 +2436,8 @@ class InstanceFaultTestCase(test.TestCase, ModelsObjectComparatorMixin):
 
         # Create faults
         for uuid in uuids:
+            db.instance_create(self.ctxt, {'uuid': uuid})
+
             expected[uuid] = []
             for code in fault_codes:
                 fault_values = self._create_fault_values(uuid, code)
@@ -2570,7 +2617,7 @@ class InstanceTypeTestCase(BaseInstanceTypeTestCase):
         all_flavors = db.flavor_get_all(self.ctxt)
 
         # Set the 3rd result as the marker
-        marker_flavorid = all_flavors[2]['id']
+        marker_flavorid = all_flavors[2]['flavorid']
         marked_flavors = db.flavor_get_all(self.ctxt, marker=marker_flavorid)
         # We expect everything /after/ the 3rd result
         expected_results = all_flavors[3:]
@@ -3856,33 +3903,35 @@ class VolumeUsageDBApiTestCase(test.TestCase):
         timeutils.utcnow().AndReturn(now)
         self.mox.ReplayAll()
 
-        expected_vol_usages = [{'volume_id': u'1',
-                                'instance_uuid': 'fake-instance-uuid1',
-                                'project_id': 'fake-project-uuid1',
-                                'user_id': 'fake-user-uuid1',
-                                'curr_reads': 1000,
-                                'curr_read_bytes': 2000,
-                                'curr_writes': 3000,
-                                'curr_write_bytes': 4000,
-                                'curr_last_refreshed': now,
-                                'tot_reads': 0,
-                                'tot_read_bytes': 0,
-                                'tot_writes': 0,
-                                'tot_write_bytes': 0,
-                                'tot_last_refreshed': None},
-                               {'volume_id': u'2',
-                                'instance_uuid': 'fake-instance-uuid2',
-                                'project_id': 'fake-project-uuid2',
-                                'user_id': 'fake-user-uuid2',
-                                'curr_reads': 100,
-                                'curr_read_bytes': 200,
-                                'curr_writes': 300,
-                                'curr_write_bytes': 400,
-                                'tot_reads': 0,
-                                'tot_read_bytes': 0,
-                                'tot_writes': 0,
-                                'tot_write_bytes': 0,
-                                'tot_last_refreshed': None}]
+        expected_vol_usages = {
+            u'1': {'volume_id': u'1',
+                   'instance_uuid': 'fake-instance-uuid1',
+                   'project_id': 'fake-project-uuid1',
+                   'user_id': 'fake-user-uuid1',
+                   'curr_reads': 1000,
+                   'curr_read_bytes': 2000,
+                   'curr_writes': 3000,
+                   'curr_write_bytes': 4000,
+                   'curr_last_refreshed': now,
+                   'tot_reads': 0,
+                   'tot_read_bytes': 0,
+                   'tot_writes': 0,
+                   'tot_write_bytes': 0,
+                   'tot_last_refreshed': None},
+            u'2': {'volume_id': u'2',
+                   'instance_uuid': 'fake-instance-uuid2',
+                   'project_id': 'fake-project-uuid2',
+                   'user_id': 'fake-user-uuid2',
+                   'curr_reads': 100,
+                   'curr_read_bytes': 200,
+                   'curr_writes': 300,
+                   'curr_write_bytes': 400,
+                   'tot_reads': 0,
+                   'tot_read_bytes': 0,
+                   'tot_writes': 0,
+                   'tot_write_bytes': 0,
+                   'tot_last_refreshed': None}
+        }
 
         def _compare(vol_usage, expected):
             for key, value in expected.items():
@@ -3912,8 +3961,8 @@ class VolumeUsageDBApiTestCase(test.TestCase):
 
         vol_usages = db.vol_get_usage_by_time(ctxt, start_time)
         self.assertEqual(len(vol_usages), 2)
-        _compare(vol_usages[0], expected_vol_usages[0])
-        _compare(vol_usages[1], expected_vol_usages[1])
+        for usage in vol_usages:
+            _compare(usage, expected_vol_usages[usage.volume_id])
 
     def test_vol_usage_update_totals_update(self):
         ctxt = context.get_admin_context()
@@ -4263,7 +4312,11 @@ class BlockDeviceMappingTestCase(test.TestCase):
         bdm2['device_name'] = '/dev/sdc'
         db.block_device_mapping_update_or_create(self.ctxt, bdm2, legacy=False)
 
-        bdm_real = db.block_device_mapping_get_all_by_instance(self.ctxt, uuid)
+        bdm_real = sorted(
+            db.block_device_mapping_get_all_by_instance(self.ctxt, uuid),
+            key=lambda bdm: bdm['device_name']
+        )
+
         self.assertEqual(len(bdm_real), 2)
         for bdm, device_name in zip(bdm_real, ['/dev/sdb', '/dev/sdc']):
             self.assertEqual(bdm['device_name'], device_name)
@@ -4321,7 +4374,7 @@ class BlockDeviceMappingTestCase(test.TestCase):
                                                           bdm['instance_uuid'])
         self.assertEqual(len(bdm), 0)
 
-    def test_block_device_mapping_destory_by_instance_and_volumne(self):
+    def test_block_device_mapping_destroy_by_instance_and_volumne(self):
         vol_id1 = '69f5c254-1a5b-4fff-acf7-cb369904f58f'
         vol_id2 = '69f5c254-1a5b-4fff-acf7-cb369904f59f'
 
@@ -5859,30 +5912,32 @@ class BwUsageTestCase(test.TestCase, ModelsObjectComparatorMixin):
         start_period = now - datetime.timedelta(seconds=10)
         uuid3_refreshed = now - datetime.timedelta(seconds=5)
 
-        expected_bw_usages = [{'uuid': 'fake_uuid1',
-                               'mac': 'fake_mac1',
-                               'start_period': start_period,
-                               'bw_in': 100,
-                               'bw_out': 200,
-                               'last_ctr_in': 12345,
-                               'last_ctr_out': 67890,
-                               'last_refreshed': now},
-                              {'uuid': 'fake_uuid2',
-                               'mac': 'fake_mac2',
-                               'start_period': start_period,
-                               'bw_in': 200,
-                               'bw_out': 300,
-                               'last_ctr_in': 22345,
-                               'last_ctr_out': 77890,
-                               'last_refreshed': now},
-                              {'uuid': 'fake_uuid3',
-                               'mac': 'fake_mac3',
-                               'start_period': start_period,
-                               'bw_in': 400,
-                               'bw_out': 500,
-                               'last_ctr_in': 32345,
-                               'last_ctr_out': 87890,
-                               'last_refreshed': uuid3_refreshed}]
+        expected_bw_usages = {
+            'fake_uuid1': {'uuid': 'fake_uuid1',
+                           'mac': 'fake_mac1',
+                           'start_period': start_period,
+                           'bw_in': 100,
+                           'bw_out': 200,
+                           'last_ctr_in': 12345,
+                           'last_ctr_out': 67890,
+                           'last_refreshed': now},
+            'fake_uuid2': {'uuid': 'fake_uuid2',
+                           'mac': 'fake_mac2',
+                           'start_period': start_period,
+                           'bw_in': 200,
+                           'bw_out': 300,
+                           'last_ctr_in': 22345,
+                           'last_ctr_out': 77890,
+                           'last_refreshed': now},
+            'fake_uuid3': {'uuid': 'fake_uuid3',
+                           'mac': 'fake_mac3',
+                           'start_period': start_period,
+                           'bw_in': 400,
+                           'bw_out': 500,
+                           'last_ctr_in': 32345,
+                           'last_ctr_out': 87890,
+                           'last_refreshed': uuid3_refreshed}
+        }
 
         bw_usages = db.bw_usage_get_by_uuids(self.ctxt,
                 ['fake_uuid1', 'fake_uuid2'], start_period)
@@ -5909,8 +5964,8 @@ class BwUsageTestCase(test.TestCase, ModelsObjectComparatorMixin):
         bw_usages = db.bw_usage_get_by_uuids(self.ctxt,
                 ['fake_uuid1', 'fake_uuid2', 'fake_uuid3'], start_period)
         self.assertEqual(len(bw_usages), 3)
-        for i, expected in enumerate(expected_bw_usages):
-            self._assertEqualObjects(bw_usages[i], expected,
+        for usage in bw_usages:
+            self._assertEqualObjects(expected_bw_usages[usage['uuid']], usage,
                                      ignored_keys=self._ignored_keys)
 
     def test_bw_usage_get(self):
@@ -6090,6 +6145,12 @@ class ArchiveTestCase(test.TestCase):
         metadata = MetaData(bind=self.engine)
         metadata.reflect()
         for table_name in metadata.tables:
+            # NOTE(rpodolyaka): migration 209 introduced a few new tables,
+            #                   which don't have shadow tables and it's
+            #                   completely OK, so we should skip them here
+            if table_name.startswith("dump_"):
+                continue
+
             if table_name.startswith("shadow_"):
                 self.assertIn(table_name[7:], metadata.tables)
                 continue
@@ -6548,10 +6609,10 @@ class InstanceGroupMetadataDBApiTestCase(InstanceGroupDBApiTestCase):
         self._assertEqualObjects(metadata, metadata3)
         db.instance_group_metadata_delete(self.context, id, 'key1')
         metadata = db.instance_group_metadata_get(self.context, id)
-        self.assertTrue('key1' not in metadata)
+        self.assertNotIn('key1', metadata)
         db.instance_group_metadata_delete(self.context, id, 'key2')
         metadata = db.instance_group_metadata_get(self.context, id)
-        self.assertTrue('key2' not in metadata)
+        self.assertNotIn('key2', metadata)
 
     def test_instance_group_metadata_invalid_ids(self):
         values = self._get_default_values()
@@ -6725,22 +6786,22 @@ class PciDeviceDBApiTestCase(test.TestCase, ModelsObjectComparatorMixin):
     def _get_fake_pci_devs(self):
         return {'id': 3353,
                 'compute_node_id': 1,
-                'address': '0000:0f:08:07',
+                'address': '0000:0f:08.7',
                 'vendor_id': '8086',
                 'product_id': '1520',
                 'dev_type': 'type-VF',
-                'dev_id': 'pci_0000:0f:08:07',
+                'dev_id': 'pci_0000:0f:08.7',
                 'extra_info': None,
                 'label': 'label_8086_1520',
                 'status': 'available',
                 'instance_uuid': '00000000-0000-0000-0000-000000000010',
                 }, {'id': 3356,
                 'compute_node_id': 1,
-                'address': '0000:0f:03:07',
+                'address': '0000:0f:03.7',
                 'vendor_id': '8083',
                 'product_id': '1523',
                 'dev_type': 'type-VF',
-                'dev_id': 'pci_0000:0f:08:07',
+                'dev_id': 'pci_0000:0f:08.7',
                 'extra_info': None,
                 'label': 'label_8086_1520',
                 'status': 'available',
@@ -6758,7 +6819,7 @@ class PciDeviceDBApiTestCase(test.TestCase, ModelsObjectComparatorMixin):
     def test_pci_device_get_by_addr(self):
         v1, v2 = self._create_fake_pci_devs()
         result = db.pci_device_get_by_addr(self.admin_context, 1,
-                                           '0000:0f:08:07')
+                                           '0000:0f:08.7')
         self._assertEqualObjects(v1, result, self.ignored_keys)
 
     def test_pci_device_get_by_addr_not_found(self):
@@ -6771,7 +6832,7 @@ class PciDeviceDBApiTestCase(test.TestCase, ModelsObjectComparatorMixin):
         self._create_fake_pci_devs()
         self.assertRaises(exception.AdminRequired,
                           db.pci_device_get_by_addr,
-                          self.context, 1, '0000:0f:08:07')
+                          self.context, 1, '0000:0f:08.7')
 
     def test_pci_device_get_by_id(self):
         v1, v2 = self._create_fake_pci_devs()
@@ -6840,14 +6901,14 @@ class PciDeviceDBApiTestCase(test.TestCase, ModelsObjectComparatorMixin):
         db.pci_device_update(self.admin_context, v1['compute_node_id'],
                              v1['address'], v1)
         result = db.pci_device_get_by_addr(
-            self.admin_context, 1, '0000:0f:08:07')
+            self.admin_context, 1, '0000:0f:08.7')
         self._assertEqualObjects(v1, result, self.ignored_keys)
 
         v1['status'] = 'claimed'
         db.pci_device_update(self.admin_context, v1['compute_node_id'],
                              v1['address'], v1)
         result = db.pci_device_get_by_addr(
-            self.admin_context, 1, '0000:0f:08:07')
+            self.admin_context, 1, '0000:0f:08.7')
         self._assertEqualObjects(v1, result, self.ignored_keys)
 
     def test_pci_device_update_low_priv(self):

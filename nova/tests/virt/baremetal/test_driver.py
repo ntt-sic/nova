@@ -64,14 +64,11 @@ class BareMetalDriverNoDBTestCase(test.NoDBTestCase):
         self.driver = bm_driver.BareMetalDriver(None)
 
     def test_validate_driver_loading(self):
-        self.assertTrue(isinstance(self.driver.driver,
-                                    fake.FakeDriver))
-        self.assertTrue(isinstance(self.driver.vif_driver,
-                                    fake.FakeVifDriver))
-        self.assertTrue(isinstance(self.driver.volume_driver,
-                                    fake.FakeVolumeDriver))
-        self.assertTrue(isinstance(self.driver.firewall_driver,
-                                    fake.FakeFirewallDriver))
+        self.assertIsInstance(self.driver.driver, fake.FakeDriver)
+        self.assertIsInstance(self.driver.vif_driver, fake.FakeVifDriver)
+        self.assertIsInstance(self.driver.volume_driver, fake.FakeVolumeDriver)
+        self.assertIsInstance(self.driver.firewall_driver,
+                              fake.FakeFirewallDriver)
 
 
 class BareMetalDriverWithDBTestCase(bm_db_base.BMDBTestCase):
@@ -137,7 +134,7 @@ class BareMetalDriverWithDBTestCase(bm_db_base.BMDBTestCase):
     def test_get_host_stats(self):
         node = self._create_node()
         stats = self.driver.get_host_stats()
-        self.assertTrue(isinstance(stats, list))
+        self.assertIsInstance(stats, list)
         self.assertEqual(len(stats), 1)
         stats = stats[0]
         self.assertEqual(stats['cpu_arch'], 'test')
@@ -384,3 +381,59 @@ class BareMetalDriverWithDBTestCase(bm_db_base.BMDBTestCase):
         res = self.driver.dhcp_options_for_instance(node['instance'])
         self.assertEqual(expected.sort(), res.sort())
         self.mox.VerifyAll()
+
+    def test_attach_volume(self):
+        connection_info = {'_fake_connection_info': None}
+        instance = utils.get_test_instance()
+        mountpoint = '/dev/sdd'
+        self.mox.StubOutWithMock(self.driver.volume_driver, 'attach_volume')
+        self.driver.volume_driver.attach_volume(connection_info,
+                                                instance,
+                                                mountpoint)
+        self.mox.ReplayAll()
+        self.driver.attach_volume(None, connection_info, instance, mountpoint)
+
+    def test_detach_volume(self):
+        connection_info = {'_fake_connection_info': None}
+        instance = utils.get_test_instance()
+        mountpoint = '/dev/sdd'
+        self.mox.StubOutWithMock(self.driver.volume_driver, 'detach_volume')
+        self.driver.volume_driver.detach_volume(connection_info,
+                                                instance,
+                                                mountpoint)
+        self.mox.ReplayAll()
+        self.driver.detach_volume(connection_info, instance, mountpoint)
+
+    def test_attach_block_devices(self):
+        connection_info_1 = {'_fake_connection_info_1': None}
+        connection_info_2 = {'_fake_connection_info_2': None}
+        block_device_mapping = [{'connection_info': connection_info_1,
+                                 'mount_device': '/dev/sde'},
+                                {'connection_info': connection_info_2,
+                                 'mount_device': '/dev/sdf'}]
+        block_device_info = {'block_device_mapping': block_device_mapping}
+        instance = utils.get_test_instance()
+
+        self.mox.StubOutWithMock(self.driver, 'attach_volume')
+        self.driver.attach_volume(None, connection_info_1, instance,
+                                  '/dev/sde')
+        self.driver.attach_volume(None, connection_info_2, instance,
+                                  '/dev/sdf')
+        self.mox.ReplayAll()
+        self.driver._attach_block_devices(instance, block_device_info)
+
+    def test_detach_block_devices(self):
+        connection_info_1 = {'_fake_connection_info_1': None}
+        connection_info_2 = {'_fake_connection_info_2': None}
+        block_device_mapping = [{'connection_info': connection_info_1,
+                                 'mount_device': '/dev/sde'},
+                                {'connection_info': connection_info_2,
+                                 'mount_device': '/dev/sdf'}]
+        block_device_info = {'block_device_mapping': block_device_mapping}
+        instance = utils.get_test_instance()
+
+        self.mox.StubOutWithMock(self.driver, 'detach_volume')
+        self.driver.detach_volume(connection_info_1, instance, '/dev/sde')
+        self.driver.detach_volume(connection_info_2, instance, '/dev/sdf')
+        self.mox.ReplayAll()
+        self.driver._detach_block_devices(instance, block_device_info)

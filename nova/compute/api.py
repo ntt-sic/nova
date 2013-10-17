@@ -68,7 +68,6 @@ from nova.openstack.common import timeutils
 from nova.openstack.common import uuidutils
 import nova.policy
 from nova import quota
-from nova.scheduler import rpcapi as scheduler_rpcapi
 from nova import servicegroup
 from nova import utils
 from nova import volume
@@ -133,8 +132,8 @@ def check_instance_state(vm_state=None, task_state=(None,),
                          must_have_launched=True):
     """Decorator to check VM and/or task state before entry to API functions.
 
-    If the instance is in the wrong state, or has not been sucessfully started
-    at least once the wrapper will raise an exception.
+    If the instance is in the wrong state, or has not been successfully
+    started at least once the wrapper will raise an exception.
     """
 
     if vm_state is not None and not isinstance(vm_state, set):
@@ -230,7 +229,6 @@ class API(base.Base):
         self.security_group_api = (security_group_api or
             openstack_driver.get_openstack_security_group_driver())
         self.consoleauth_rpcapi = consoleauth_rpcapi.ConsoleAuthAPI()
-        self.scheduler_rpcapi = scheduler_rpcapi.SchedulerAPI()
         self.compute_rpcapi = compute_rpcapi.ComputeAPI()
         self._compute_task_api = None
         self.servicegroup_api = servicegroup.API()
@@ -1263,7 +1261,6 @@ class API(base.Base):
 
         if image:
             image_props = image.get("properties", {})
-            LOG.error(image_props)
             auto_disk_config_img = \
                 utils.get_auto_disk_config_from_image_props(image_props)
             image_ref = image.get("id")
@@ -1313,9 +1310,30 @@ class API(base.Base):
                                                      new_type_id,
                                                      project_id, user_id)
 
+            if self.cell_type == 'api':
+                # NOTE(comstud): If we're in the API cell, we need to
+                # skip all remaining logic and just call the callback,
+                # which will cause a cast to the child cell.  Also,
+                # commit reservations here early until we have a better
+                # way to deal with quotas with cells.
+                cb(context, instance, bdms, reservations=None)
+                if reservations:
+                    QUOTAS.commit(context,
+                                  reservations,
+                                  project_id=project_id,
+                                  user_id=user_id)
+                return
+
             if not host:
                 try:
+                    compute_utils.notify_about_instance_usage(
+                            self.notifier, context, instance,
+                            "%s.start" % delete_type)
                     instance.destroy()
+                    compute_utils.notify_about_instance_usage(
+                            self.notifier, context, instance,
+                            "%s.end" % delete_type,
+                            system_metadata=instance.system_metadata)
                     if reservations:
                         QUOTAS.commit(context,
                                       reservations,
@@ -1976,6 +1994,16 @@ class API(base.Base):
                                       task_states.SUSPENDING])
     def reboot(self, context, instance, reboot_type):
         """Reboot the given instance."""
+        if (reboot_type == 'SOFT' and
+                (instance['vm_state'] in [vm_states.STOPPED,
+                                          vm_states.PAUSED,
+                                          vm_states.SUSPENDED,
+                                          vm_states.ERROR])):
+            raise exception.InstanceInvalidState(
+                attr='vm_state',
+                instance_uuid=instance['uuid'],
+                state=instance['vm_state'],
+                method='reboot')
         if ((reboot_type == 'SOFT' and
                 instance['task_state'] == task_states.REBOOTING) or
             (reboot_type == 'HARD' and
@@ -2352,9 +2380,8 @@ class API(base.Base):
         self._record_action_start(context, instance, instance_actions.SHELVE)
 
         image_id = None
-        bdms = self.get_instance_bdms(context, instance)
-        if not self.is_volume_backed_instance(context, instance, bdms):
-            name = '%s-shelved' % instance['name']
+        if not self.is_volume_backed_instance(context, instance):
+            name = '%s-shelved' % instance['display_name']
             image_meta = self._create_image(context, instance, name,
                     'snapshot')
             image_id = image_meta['id']
@@ -2457,7 +2484,7 @@ class API(base.Base):
     def rescue(self, context, instance, rescue_password=None):
         """Rescue the given instance."""
 
-        bdms = self.get_instance_bdms(context, instance)
+        bdms = self.get_instance_bdms(context, instance, legacy=False)
         for bdm in bdms:
             if bdm['volume_id']:
                 volume = self.volume_api.get(context, bdm['volume_id'])
@@ -2465,7 +2492,7 @@ class API(base.Base):
         # TODO(ndipanov): This check can be generalized as a decorator to
         # check for valid combinations of src and dests - for now check
         # if it's booted from volume only
-        if self.is_volume_backed_instance(context, instance, None):
+        if self.is_volume_backed_instance(context, instance, bdms):
             reason = _("Cannot rescue a volume-backed instance")
             raise exception.InstanceNotRescuable(instance_id=instance['uuid'],
                                                  reason=reason)
@@ -2858,24 +2885,16 @@ class API(base.Base):
             return block_device.legacy_mapping(bdms)
         return bdms
 
-    def is_volume_backed_instance(self, context, instance, bdms):
+    def is_volume_backed_instance(self, context, instance, bdms=None):
         if not instance['image_ref']:
             return True
 
-        if instance.get('root_device_name') is None:
-            return False
-
         if bdms is None:
-            bdms = self.get_instance_bdms(context, instance)
+            bdms = self.get_instance_bdms(context, instance, legacy=False)
 
-        for bdm in bdms:
-            if ((block_device.strip_dev(bdm['device_name']) ==
-                 block_device.strip_dev(instance['root_device_name']))
-                and
-                (bdm['volume_id'] is not None or
-                 bdm['snapshot_id'] is not None)):
+        root_bdm = block_device.get_root_bdm(bdms)
+        if root_bdm and root_bdm.get('destination_type') == 'volume':
                 return True
-
         return False
 
     @check_instance_cell
@@ -2909,7 +2928,7 @@ class API(base.Base):
             msg = (_('Instance compute service state on %s '
                      'expected to be down, but it was up.') % inst_host)
             LOG.error(msg)
-            raise exception.ComputeServiceUnavailable(msg)
+            raise exception.ComputeServiceInUse(host=inst_host)
 
         instance = self.update(context, instance, expected_task_state=None,
                                task_state=task_states.REBUILDING)
@@ -3167,8 +3186,8 @@ class AggregateAPI(base.Base):
             # if it is none then that is just a regular aggregate and
             # it is valid to have a host in multiple aggregates.
             if aggregate_az and aggregate_az != host_az:
-                msg = _("Host already in availability zone"
-                        "%s.") % host_az
+                msg = _("Host already in availability zone "
+                        "%s") % host_az
                 action_name = "add_host_to_aggregate"
                 raise exception.InvalidAggregateAction(
                     action=action_name, aggregate_id=aggregate_id,
@@ -3195,8 +3214,7 @@ class AggregateAPI(base.Base):
         aggregate.add_host(context, host_name)
         #NOTE(jogo): Send message to host to support resource pools
         self.compute_rpcapi.add_aggregate_host(context,
-                aggregate=obj_base.obj_to_primitive(aggregate),
-                host_param=host_name, host=host_name)
+                aggregate=aggregate, host_param=host_name, host=host_name)
         aggregate_payload.update({'name': aggregate['name']})
         compute_utils.notify_about_aggregate_update(context,
                                                     "addhost.end",
@@ -3216,8 +3234,7 @@ class AggregateAPI(base.Base):
         aggregate = aggregate_obj.Aggregate.get_by_id(context, aggregate_id)
         aggregate.delete_host(host_name)
         self.compute_rpcapi.remove_aggregate_host(context,
-                aggregate=obj_base.obj_to_primitive(aggregate),
-                host_param=host_name, host=host_name)
+                aggregate=aggregate, host_param=host_name, host=host_name)
         compute_utils.notify_about_aggregate_update(context,
                                                     "removehost.end",
                                                     aggregate_payload)
@@ -3230,6 +3247,15 @@ class AggregateAPI(base.Base):
 
 class KeypairAPI(base.Base):
     """Subset of the Compute Manager API for managing key pairs."""
+
+    def _notify(self, context, event_suffix, keypair_name):
+        payload = {
+            'tenant_id': context.project_id,
+            'user_id': context.user_id,
+            'key_name': keypair_name,
+        }
+        notify = notifier.get_notifier(service='api')
+        notify.info(context, 'keypair.%s' % event_suffix, payload)
 
     def _validate_new_key_pair(self, context, user_id, key_name):
         safe_chars = "_- " + string.digits + string.ascii_letters
@@ -3249,9 +3275,12 @@ class KeypairAPI(base.Base):
         except exception.OverQuota:
             raise exception.KeypairLimitExceeded()
 
+    @exception.wrap_exception(notifier=notifier.get_notifier(service='api'))
     def import_key_pair(self, context, user_id, key_name, public_key):
         """Import a key pair using an existing public key."""
         self._validate_new_key_pair(context, user_id, key_name)
+
+        self._notify(context, 'import.start', key_name)
 
         fingerprint = crypto.generate_fingerprint(public_key)
 
@@ -3262,11 +3291,16 @@ class KeypairAPI(base.Base):
         keypair.public_key = public_key
         keypair.create(context)
 
+        self._notify(context, 'import.end', key_name)
+
         return keypair
 
+    @exception.wrap_exception(notifier=notifier.get_notifier(service='api'))
     def create_key_pair(self, context, user_id, key_name):
         """Create a new key pair."""
         self._validate_new_key_pair(context, user_id, key_name)
+
+        self._notify(context, 'create.start', key_name)
 
         private_key, public_key, fingerprint = crypto.generate_key_pair()
 
@@ -3277,11 +3311,16 @@ class KeypairAPI(base.Base):
         keypair.public_key = public_key
         keypair.create(context)
 
+        self._notify(context, 'create.end', key_name)
+
         return keypair, private_key
 
+    @exception.wrap_exception(notifier=notifier.get_notifier(service='api'))
     def delete_key_pair(self, context, user_id, key_name):
         """Delete a keypair by name."""
+        self._notify(context, 'delete.start', key_name)
         keypair_obj.KeyPair.destroy_by_name(context, user_id, key_name)
+        self._notify(context, 'delete.end', key_name)
 
     def get_key_pairs(self, context, user_id):
         """List key pairs."""
@@ -3298,7 +3337,7 @@ class SecurityGroupAPI(base.Base, security_group_base.SecurityGroupBase):
     and security group rules
     """
 
-    # The nova seurity group api does not use a uuid for the id.
+    # The nova security group api does not use a uuid for the id.
     id_is_uuid = False
 
     def __init__(self, **kwargs):
@@ -3539,9 +3578,9 @@ class SecurityGroupAPI(base.Base, security_group_base.SecurityGroupBase):
     def add_rules(self, context, id, name, vals):
         """Add security group rule(s) to security group.
 
-        Note: the Nova security group API doesn't support adding muliple
+        Note: the Nova security group API doesn't support adding multiple
         security group rules at once but the EC2 one does. Therefore,
-        this function is writen to support both.
+        this function is written to support both.
         """
 
         count = QUOTAS.count(context, 'security_group_rules', id)

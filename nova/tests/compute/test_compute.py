@@ -1035,7 +1035,7 @@ class ComputeTestCase(BaseTestCase):
 
         @compute_manager.object_compat
         def test_fn(_self, context, instance):
-            self.assertTrue(isinstance(instance, instance_obj.Instance))
+            self.assertIsInstance(instance, instance_obj.Instance)
             self.assertEqual(instance.uuid, db_inst['uuid'])
 
         test_fn(None, self.context, instance=db_inst)
@@ -1418,6 +1418,20 @@ class ComputeTestCase(BaseTestCase):
 
         self.compute.run_instance(self.context, instance)
         self.assertIn('instance_update', called)
+
+    def test_run_instance_bails_on_missing_instance_2(self):
+        # Make sure that run_instance() will quickly ignore a deleted instance
+        called = {}
+        instance = self._create_fake_instance()
+
+        def fake_default_block_device_names(self, *a, **args):
+            called['default_block_device_names'] = True
+            raise exception.InstanceNotFound(instance_id='foo')
+        self.stubs.Set(self.compute, '_default_block_device_names',
+                       fake_default_block_device_names)
+
+        self.compute.run_instance(self.context, instance)
+        self.assertIn('default_block_device_names', called)
 
     def test_can_terminate_on_error_state(self):
         # Make sure that the instance can be terminated in ERROR state.
@@ -2944,7 +2958,6 @@ class ComputeTestCase(BaseTestCase):
             mox.IgnoreArg(),
             requested_networks=None,
             vpn=False, macs=macs,
-            conductor_api=self.compute.conductor_api,
             security_groups=[], dhcp_options=None).AndReturn(
                 fake_network.fake_get_instance_nw_info(self.stubs, 1, 1))
 
@@ -2966,7 +2979,6 @@ class ComputeTestCase(BaseTestCase):
                 mox.IgnoreArg(),
                 requested_networks=None,
                 vpn=False, macs=None,
-                conductor_api=self.compute.conductor_api,
                 security_groups=[], dhcp_options=None
                 ).AndRaise(rpc_common.RemoteError())
         self.compute.network_api.deallocate_for_instance(
@@ -4942,8 +4954,6 @@ class ComputeTestCase(BaseTestCase):
         self.mox.StubOutWithMock(self.compute.network_api,
                                  'get_instance_nw_info')
         self.mox.StubOutWithMock(self.compute.conductor_api,
-                                 'instance_info_cache_update')
-        self.mox.StubOutWithMock(self.compute.conductor_api,
                                  'instance_get_by_uuid')
 
         self.compute.conductor_api.instance_get_by_uuid(
@@ -6080,8 +6090,7 @@ class ComputeAPITestCase(BaseTestCase):
 
     def test_populate_instance_for_create(self):
         base_options = {'image_ref': self.fake_image['id'],
-                        'system_metadata': utils.dict_to_metadata(
-                                                            {'fake': 'value'})}
+                        'system_metadata': {'fake': 'value'}}
         instance = instance_obj.Instance()
         instance.update(base_options)
         inst_type = flavors.get_flavor_by_name("m1.tiny")
@@ -6478,6 +6487,7 @@ class ComputeAPITestCase(BaseTestCase):
         def fake_get_instance_bdms(*args, **kwargs):
             return [{'device_name': '/dev/vda',
                      'source_type': 'volume',
+                     'boot_index': 0,
                      'destination_type': 'volume',
                      'volume_id': 'bf0b6b00-a20c-11e2-9e96-0800200c9a66'}]
 
@@ -7185,45 +7195,52 @@ class ComputeAPITestCase(BaseTestCase):
     def test_is_volume_backed_instance(self):
         ctxt = self.context
 
-        instance = self._create_fake_instance({'image_ref': None})
+        instance = self._create_fake_instance({'image_ref': ''})
         self.assertTrue(
             self.compute_api.is_volume_backed_instance(ctxt, instance, None))
 
         instance = self._create_fake_instance({'root_device_name': 'vda'})
         self.assertFalse(
             self.compute_api.is_volume_backed_instance(ctxt, instance, []))
+
         bdms = [{'device_name': '/dev/vda',
-                 'volume_id': None,
+                 'volume_id': 'fake_volume_id',
+                 'boot_index': 0,
+                 'destination_type': 'volume'}]
+        self.assertTrue(
+            self.compute_api.is_volume_backed_instance(ctxt, instance, bdms))
+
+        bdms = [{'device_name': '/dev/vda',
+                 'volume_id': 'fake_volume_id',
+                 'destination_type': 'local',
+                 'boot_index': 0,
+                 'snapshot_id': None},
+                {'device_name': '/dev/vdb',
+                 'boot_index': 1,
+                 'destination_type': 'volume',
+                 'volume_id': 'c2ec2156-d75e-11e2-985b-5254009297d6',
                  'snapshot_id': None}]
         self.assertFalse(
             self.compute_api.is_volume_backed_instance(ctxt, instance, bdms))
 
         bdms = [{'device_name': '/dev/vda',
-                 'volume_id': None,
-                 'snapshot_id': None},
-                {'device_name': '/dev/vdb',
-                 'volume_id': 'c2ec2156-d75e-11e2-985b-5254009297d6',
-                 'snapshot_id': None}]
-        self.assertFalse(
-            self.compute_api.is_volume_backed_instance(ctxt, instance, bdms))
-
-        bdms = [{'device_name': '/dev/vda',
-                 'volume_id': 'de8836ac-d75e-11e2-8271-5254009297d6',
-                 'snapshot_id': None},
-                {'device_name': '/dev/vdb',
-                 'volume_id': 'c2ec2156-d75e-11e2-985b-5254009297d6',
-                 'snapshot_id': None}]
+                 'snapshot_id': 'de8836ac-d75e-11e2-8271-5254009297d6',
+                 'destination_type': 'volume',
+                 'boot_index': 0,
+                 'volume_id': None}]
         self.assertTrue(
             self.compute_api.is_volume_backed_instance(ctxt, instance, bdms))
 
-        bdms = [{'device_name': '/dev/vda',
-                 'volume_id': 'de8836ac-d75e-11e2-8271-5254009297d6',
-                 'snapshot_id': 'f561c730-d75e-11e2-b505-5254009297d6'},
-                {'device_name': '/dev/vdb',
-                 'volume_id': 'c2ec2156-d75e-11e2-985b-5254009297d6',
-                 'snapshot_id': None}]
-        self.assertTrue(
-            self.compute_api.is_volume_backed_instance(ctxt, instance, bdms))
+    def test_is_volume_backed_instance_no_bdms(self):
+        ctxt = self.context
+        instance = self._create_fake_instance()
+
+        self.mox.StubOutWithMock(self.compute_api, 'get_instance_bdms')
+        self.compute_api.get_instance_bdms(ctxt, instance,
+                                           legacy=False).AndReturn([])
+        self.mox.ReplayAll()
+
+        self.compute_api.is_volume_backed_instance(ctxt, instance, None)
 
     def test_reservation_id_one_instance(self):
         """Verify building an instance has a reservation_id that
@@ -7537,8 +7554,8 @@ class ComputeAPITestCase(BaseTestCase):
         port_id = nwinfo[0]['id']
         req_ip = '1.2.3.4'
         self.compute.network_api.allocate_port_for_instance(
-            self.context, instance, port_id, network_id, req_ip,
-            conductor_api=self.compute.conductor_api).AndReturn(nwinfo)
+            self.context, instance, port_id, network_id, req_ip
+            ).AndReturn(nwinfo)
         self.mox.ReplayAll()
         vif = self.compute.attach_interface(self.context,
                                             instance,
@@ -7554,7 +7571,7 @@ class ComputeAPITestCase(BaseTestCase):
                        lambda *a, **k: nwinfo)
         self.stubs.Set(self.compute.network_api,
                        'deallocate_port_for_instance',
-                       lambda a, b, c, conductor_api=None: [])
+                       lambda a, b, c: [])
         self.compute.detach_interface(self.context, {}, port_id)
         self.assertEqual(self.compute.driver._interfaces, {})
 
@@ -8076,7 +8093,7 @@ class ComputeAPITestCase(BaseTestCase):
         self.stubs.Set(self.compute_api.servicegroup_api, 'service_is_up',
                 fake_service_is_up)
 
-        self.assertRaises(exception.ComputeServiceUnavailable,
+        self.assertRaises(exception.ComputeServiceInUse,
                 self.compute_api.evacuate, self.context.elevated(), instance,
                 host='fake_dest_host', on_shared_storage=True,
                 admin_password=None)
@@ -8387,7 +8404,7 @@ class ComputeAPIAggrTestCase(BaseTestCase):
 
         def fake_remove_aggregate_host(*args, **kwargs):
             hosts = kwargs["aggregate"]["hosts"]
-            self.assertFalse(host_to_remove in hosts)
+            self.assertNotIn(host_to_remove, hosts)
 
         self.stubs.Set(self.api.compute_rpcapi, 'remove_aggregate_host',
                        fake_remove_aggregate_host)
@@ -9496,39 +9513,3 @@ class CheckRequestedImageTestCase(test.TestCase):
 
         self.compute_api._check_requested_image(self.context, image['id'],
                 image, self.instance_type)
-
-
-class ComputeAPIClassNameTestCase(test.TestCase):
-    def setUp(self):
-        super(ComputeAPIClassNameTestCase, self).setUp()
-
-    def test_default_compute_api_class_name(self):
-        result = compute._get_compute_api_class_name()
-        self.assertEqual('nova.compute.api.API', result)
-
-    def test_cell_compute_api_class_name(self):
-        self.flags(enable=True, group='cells')
-        self.flags(cell_type='api', group='cells')
-        result = compute._get_compute_api_class_name()
-        self.assertEqual('nova.compute.cells_api.ComputeCellsAPI', result)
-        self.flags(cell_type='compute', group='cells')
-        result = compute._get_compute_api_class_name()
-        self.assertEqual('nova.compute.api.API', result)
-
-    def test_cell_compute_api_class_name_deprecated(self):
-        self.flags(enable=True, group='cells')
-        self.flags(cell_type='', group='cells')
-        api_cls_name = 'nova.compute.cells_api.ComputeCellsAPI'
-        self.flags(compute_api_class=api_cls_name)
-        result = compute._get_compute_api_class_name()
-        self.assertEqual('nova.compute.cells_api.ComputeCellsAPI', result)
-        api_cls_name = 'nova.compute.api.API'
-        self.flags(compute_api_class=api_cls_name)
-        result = compute._get_compute_api_class_name()
-        self.assertEqual('nova.compute.api.API', result)
-
-    def test_illegal_cell_compute_api_class_name(self):
-        self.flags(enable=True, group='cells')
-        self.flags(cell_type='fake_cell_type', group='cells')
-        self.assertRaises(exception.InvalidInput,
-                          compute._get_compute_api_class_name)

@@ -33,6 +33,7 @@ from nova.db.sqlalchemy import models
 from nova import exception as exc
 from nova import notifications
 from nova.objects import base as obj_base
+from nova.objects import fields
 from nova.objects import instance as instance_obj
 from nova.objects import migration as migration_obj
 from nova.openstack.common import jsonutils
@@ -197,27 +198,6 @@ class _BaseTestCase(object):
         aggregates = self.conductor.aggregate_get_by_host(self.context, 'bar')
         self.assertEqual(aggregates[0]['availability_zone'], 'foo')
 
-    def test_aggregate_metadata_add(self):
-        aggregate = {'name': 'fake aggregate', 'id': 'fake-id'}
-        metadata = {'foo': 'bar'}
-        self.mox.StubOutWithMock(db, 'aggregate_metadata_add')
-        db.aggregate_metadata_add(
-            mox.IgnoreArg(), aggregate['id'], metadata, False).AndReturn(
-                metadata)
-        self.mox.ReplayAll()
-        result = self.conductor.aggregate_metadata_add(self.context,
-                                                       aggregate,
-                                                       metadata)
-        self.assertEqual(result, metadata)
-
-    def test_aggregate_metadata_delete(self):
-        aggregate = {'name': 'fake aggregate', 'id': 'fake-id'}
-        self.mox.StubOutWithMock(db, 'aggregate_metadata_delete')
-        db.aggregate_metadata_delete(mox.IgnoreArg(), aggregate['id'], 'fake')
-        self.mox.ReplayAll()
-        self.conductor.aggregate_metadata_delete(self.context, aggregate,
-                                                 'fake')
-
     def test_aggregate_metadata_get_by_host(self):
         self.mox.StubOutWithMock(db, 'aggregate_metadata_get_by_host')
         db.aggregate_metadata_get_by_host(self.context, 'host',
@@ -313,17 +293,6 @@ class _BaseTestCase(object):
         self.mox.ReplayAll()
         self.conductor.instance_info_cache_delete(self.context,
                                                   {'uuid': 'fake-uuid'})
-
-    def test_instance_info_cache_update(self):
-        fake_values = {'key1': 'val1', 'key2': 'val2'}
-        fake_inst = {'uuid': 'fake-uuid'}
-        self.mox.StubOutWithMock(db, 'instance_info_cache_update')
-        db.instance_info_cache_update(self.context, 'fake-uuid',
-                                      fake_values)
-        self.mox.ReplayAll()
-        self.conductor.instance_info_cache_update(self.context,
-                                                  fake_inst,
-                                                  fake_values)
 
     def test_flavor_get(self):
         self.mox.StubOutWithMock(db, 'flavor_get')
@@ -577,6 +546,17 @@ class ConductorTestCase(_BaseTestCase, test.TestCase):
         super(ConductorTestCase, self).setUp()
         self.conductor = conductor_manager.ConductorManager()
         self.conductor_manager = self.conductor
+
+    def test_instance_info_cache_update(self):
+        fake_values = {'key1': 'val1', 'key2': 'val2'}
+        fake_inst = {'uuid': 'fake-uuid'}
+        self.mox.StubOutWithMock(db, 'instance_info_cache_update')
+        db.instance_info_cache_update(self.context, 'fake-uuid',
+                                      fake_values)
+        self.mox.ReplayAll()
+        self.conductor.instance_info_cache_update(self.context,
+                                                  fake_inst,
+                                                  fake_values)
 
     def test_migration_get(self):
         migration = db.migration_create(self.context.elevated(),
@@ -864,6 +844,46 @@ class ConductorTestCase(_BaseTestCase, test.TestCase):
     def test_object_class_action_on_raise(self):
         self.assertRaises(rpc_common.ClientException,
                           self._test_object_action, True, True)
+
+    def test_object_action_copies_object(self):
+        class TestObject(obj_base.NovaObject):
+            fields = {'dict': fields.DictOfStringsField()}
+
+            def touch_dict(self, context):
+                self.dict['foo'] = 'bar'
+                self.obj_reset_changes()
+
+        obj = TestObject()
+        obj.dict = {}
+        obj.obj_reset_changes()
+        updates, result = self.conductor.object_action(
+            self.context, obj, 'touch_dict', tuple(), {})
+        # NOTE(danms): If conductor did not properly copy the object, then
+        # the new and reference copies of the nested dict object will be
+        # the same, and thus 'dict' will not be reported as changed
+        self.assertIn('dict', updates)
+        self.assertEqual({'foo': 'bar'}, updates['dict'])
+
+    def test_aggregate_metadata_add(self):
+        aggregate = {'name': 'fake aggregate', 'id': 'fake-id'}
+        metadata = {'foo': 'bar'}
+        self.mox.StubOutWithMock(db, 'aggregate_metadata_add')
+        db.aggregate_metadata_add(
+            mox.IgnoreArg(), aggregate['id'], metadata, False).AndReturn(
+                metadata)
+        self.mox.ReplayAll()
+        result = self.conductor.aggregate_metadata_add(self.context,
+                                                       aggregate,
+                                                       metadata)
+        self.assertEqual(result, metadata)
+
+    def test_aggregate_metadata_delete(self):
+        aggregate = {'name': 'fake aggregate', 'id': 'fake-id'}
+        self.mox.StubOutWithMock(db, 'aggregate_metadata_delete')
+        db.aggregate_metadata_delete(mox.IgnoreArg(), aggregate['id'], 'fake')
+        self.mox.ReplayAll()
+        self.conductor.aggregate_metadata_delete(self.context, aggregate,
+                                                 'fake')
 
 
 class ConductorRPCAPITestCase(_BaseTestCase, test.TestCase):
@@ -1209,24 +1229,22 @@ class ConductorLocalAPITestCase(ConductorAPITestCase):
 class ConductorImportTest(test.TestCase):
     def test_import_conductor_local(self):
         self.flags(use_local=True, group='conductor')
-        self.assertTrue(isinstance(conductor.API(),
-                                   conductor_api.LocalAPI))
-        self.assertTrue(isinstance(conductor.ComputeTaskAPI(),
-                                   conductor_api.LocalComputeTaskAPI))
+        self.assertIsInstance(conductor.API(), conductor_api.LocalAPI)
+        self.assertIsInstance(conductor.ComputeTaskAPI(),
+                              conductor_api.LocalComputeTaskAPI)
 
     def test_import_conductor_rpc(self):
         self.flags(use_local=False, group='conductor')
-        self.assertTrue(isinstance(conductor.API(),
-                                   conductor_api.API))
-        self.assertTrue(isinstance(conductor.ComputeTaskAPI(),
-                                   conductor_api.ComputeTaskAPI))
+        self.assertIsInstance(conductor.API(), conductor_api.API)
+        self.assertIsInstance(conductor.ComputeTaskAPI(),
+                              conductor_api.ComputeTaskAPI)
 
     def test_import_conductor_override_to_local(self):
         self.flags(use_local=False, group='conductor')
-        self.assertTrue(isinstance(conductor.API(use_local=True),
-                                   conductor_api.LocalAPI))
-        self.assertTrue(isinstance(conductor.ComputeTaskAPI(use_local=True),
-                                   conductor_api.LocalComputeTaskAPI))
+        self.assertIsInstance(conductor.API(use_local=True),
+                              conductor_api.LocalAPI)
+        self.assertIsInstance(conductor.ComputeTaskAPI(use_local=True),
+                              conductor_api.LocalComputeTaskAPI)
 
 
 class ConductorPolicyTest(test.TestCase):

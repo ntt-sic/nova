@@ -90,7 +90,7 @@ def return_non_existing_address(*args, **kwarg):
 
 def fake_InstanceMetadata(stubs, inst_data, address=None,
                           sgroups=None, content=[], extra_md={},
-                          vd_driver=None):
+                          vd_driver=None, network_info=None):
 
     if sgroups is None:
         sgroups = [{'name': 'default'}]
@@ -101,7 +101,7 @@ def fake_InstanceMetadata(stubs, inst_data, address=None,
     stubs.Set(api, 'security_group_get_by_instance', sg_get)
     return base.InstanceMetadata(inst_data, address=address,
         content=content, extra_md=extra_md,
-        vd_driver=vd_driver)
+        vd_driver=vd_driver, network_info=network_info)
 
 
 def fake_request(stubs, mdinst, relpath, address="127.0.0.1",
@@ -276,7 +276,7 @@ class MetadataTestCase(test.TestCase):
         self.assertTrue(md._check_version('2009-04-04', '2009-04-04'))
 
     def test_InstanceMetadata_uses_passed_network_info(self):
-        network_info = {"a": "b"}
+        network_info = []
 
         self.mox.StubOutWithMock(netutils, "get_injected_network_template")
         netutils.get_injected_network_template(network_info).AndReturn(False)
@@ -291,7 +291,7 @@ class MetadataTestCase(test.TestCase):
             self.assertIsNotNone(path)
 
     def test_InstanceMetadata_queries_network_API_when_needed(self):
-        network_info_from_api = {"c": "d"}
+        network_info_from_api = []
 
         self.mox.StubOutWithMock(network_api.API, "get_instance_nw_info")
 
@@ -307,6 +307,30 @@ class MetadataTestCase(test.TestCase):
         self.mox.ReplayAll()
 
         base.InstanceMetadata(INSTANCES[0])
+
+    def test_local_ipv4_from_nw_info(self):
+        nw_info = fake_network.fake_get_instance_nw_info(self.stubs,
+                                                         num_networks=2)
+        expected_local = "192.168.1.100"
+        md = fake_InstanceMetadata(self.stubs, self.instance,
+                                   network_info=nw_info)
+        data = md.get_ec2_metadata(version='2009-04-04')
+        self.assertEqual(data['meta-data']['local-ipv4'], expected_local)
+
+    def test_local_ipv4_from_address(self):
+        nw_info = fake_network.fake_get_instance_nw_info(self.stubs,
+                                                         num_networks=2)
+        expected_local = "fake"
+        md = fake_InstanceMetadata(self.stubs, self.instance,
+                                   network_info=nw_info, address="fake")
+        data = md.get_ec2_metadata(version='2009-04-04')
+        self.assertEqual(data['meta-data']['local-ipv4'], expected_local)
+
+    def test_local_ipv4_from_nw_none(self):
+        md = fake_InstanceMetadata(self.stubs, self.instance,
+                                   network_info=[])
+        data = md.get_ec2_metadata(version='2009-04-04')
+        self.assertEqual(data['meta-data']['local-ipv4'], '')
 
 
 class OpenStackMetadataTestCase(test.TestCase):
@@ -328,7 +352,7 @@ class OpenStackMetadataTestCase(test.TestCase):
         self.assertEqual(result, mdinst.lookup("/openstack/"))
 
         # the 'content' should not show up in directory listing
-        self.assertTrue(base.CONTENT_DIR not in result)
+        self.assertNotIn(base.CONTENT_DIR, result)
         self.assertTrue('2012-08-10' in result)
         self.assertTrue('latest' in result)
 
@@ -409,7 +433,7 @@ class OpenStackMetadataTestCase(test.TestCase):
         mdinst = fake_InstanceMetadata(self.stubs, inst)
 
         # since this instance had no user-data it should not be there.
-        self.assertFalse('user_data' in mdinst.lookup("/openstack/2012-08-10"))
+        self.assertNotIn('user_data', mdinst.lookup("/openstack/2012-08-10"))
 
         self.assertRaises(base.InvalidMetadataPath,
             mdinst.lookup, "/openstack/2012-08-10/user_data")
@@ -427,7 +451,7 @@ class OpenStackMetadataTestCase(test.TestCase):
 
         # verify that older version do not have it
         mdjson = mdinst.lookup("/openstack/2012-08-10/meta_data.json")
-        self.assertFalse("random_seed" in json.loads(mdjson))
+        self.assertNotIn("random_seed", json.loads(mdjson))
 
     def test_no_dashes_in_metadata(self):
         # top level entries in meta_data should not contain '-' in their name
@@ -447,7 +471,7 @@ class OpenStackMetadataTestCase(test.TestCase):
 
         # verify that older version do not have it
         result = mdinst.lookup("/openstack/2013-04-04")
-        self.assertFalse('vendor_data.json' in result)
+        self.assertNotIn('vendor_data.json', result)
 
     def test_vendor_data_response(self):
         inst = copy.copy(self.instance)
@@ -496,7 +520,7 @@ class MetadataHandlerTestCase(test.TestCase):
     def test_callable(self):
 
         def verify(req, meta_data):
-            self.assertTrue(isinstance(meta_data, CallableMD))
+            self.assertIsInstance(meta_data, CallableMD)
             return "foo"
 
         class CallableMD(object):

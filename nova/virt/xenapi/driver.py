@@ -49,6 +49,7 @@ from oslo.config import cfg
 
 from nova import context
 from nova import exception
+from nova.objects import aggregate as aggregate_obj
 from nova.openstack.common.gettextutils import _
 from nova.openstack.common import jsonutils
 from nova.openstack.common import log as logging
@@ -552,7 +553,7 @@ class XenAPIDriver(driver.ComputeDriver):
             nova.db.sqlalchemy.models.Instance object
             instance object that is migrated.
         :params network_info: instance network information
-        :params : block_migration: if true, post operation of block_migraiton.
+        :params : block_migration: if true, post operation of block_migration.
         """
         self._vmops.post_live_migration_at_destination(ctxt, instance_ref,
                 network_info, block_device_info, block_device_info)
@@ -717,7 +718,7 @@ class XenAPISession(object):
 
     def _get_host_uuid(self):
         if self.is_slave:
-            aggr = self._virtapi.aggregate_get_by_host(
+            aggr = aggregate_obj.AggregateList.get_by_host(
                 context.get_admin_context(),
                 CONF.host, key=pool_states.POOL_FLAG)[0]
             if not aggr:
@@ -810,8 +811,13 @@ class XenAPISession(object):
                      {'plugin': plugin, 'fn': fn, 'attempt': attempt,
                       'attempts': attempts})
             try:
+                if attempt > 1:
+                    time.sleep(sleep_time)
+                    sleep_time = min(2 * sleep_time, 15)
+
                 if callback:
                     callback(kwargs)
+
                 return self.call_plugin_serialized(plugin, fn, *args, **kwargs)
             except self.XenAPI.Failure as exc:
                 if self._is_retryable_exception(exc):
@@ -819,9 +825,6 @@ class XenAPISession(object):
                              % {'plugin': plugin, 'fn': fn})
                 else:
                     raise
-
-            time.sleep(sleep_time)
-            sleep_time = min(2 * sleep_time, 15)
 
         raise exception.PluginRetriesExceeded(num_retries=num_retries)
 

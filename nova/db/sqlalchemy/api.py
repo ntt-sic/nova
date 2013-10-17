@@ -52,7 +52,6 @@ from nova import block_device
 from nova.compute import task_states
 from nova.compute import vm_states
 import nova.context
-from nova import db
 from nova.db.sqlalchemy import models
 from nova import exception
 from nova.openstack.common.db import exception as db_exc
@@ -2180,6 +2179,7 @@ def instance_update_and_get_original(context, instance_uuid, values,
 # delete=True behavior of instance_metadata_update(...)
 def _instance_metadata_update_in_place(context, instance, metadata_type, model,
                                        metadata, session):
+    metadata = dict(metadata)
     to_delete = []
     for keyvalue in instance[metadata_type]:
         key = keyvalue['key']
@@ -2438,7 +2438,7 @@ def network_associate(context, project_id, network_id=None, force=False):
             # get new network
             network_ref = network_query(None, network_id)
             if not network_ref:
-                raise db.NoMoreNetworks()
+                raise exception.NoMoreNetworks()
 
             # associate with network
             # NOTE(vish): if with_lockmode isn't supported, as in sqlite,
@@ -4248,7 +4248,7 @@ def flavor_get_all(context, inactive=False, filters=None,
     if marker is not None:
         marker = _instance_type_get_query(context,
                                           read_deleted=read_deleted).\
-                    filter_by(id=marker).\
+                    filter_by(flavorid=marker).\
                     first()
         if not marker:
             raise exception.MarkerNotFound(marker)
@@ -5634,7 +5634,7 @@ def instance_group_update(context, group_uuid, values):
     """Update the attributes of an group.
 
     If values contains a metadata key, it updates the aggregate metadata
-    too. Similary for the policies and members.
+    too. Similarly for the policies and members.
     """
     session = get_session()
     with session.begin():

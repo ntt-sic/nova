@@ -25,6 +25,7 @@ from nova import context
 from nova import db
 from nova import exception
 from nova.objects import base as objects_base
+from nova.objects import fields as objects_fields
 from nova.objects import instance as instance_obj
 from nova.openstack.common import jsonutils
 from nova.openstack.common import rpc
@@ -275,7 +276,7 @@ class CellsMessageClassesTestCase(test.TestCase):
             """Test object.  We just need 1 field in order to test
             that this gets serialized properly.
             """
-            fields = {'test': str}
+            fields = {'test': objects_fields.StringField()}
 
         test_obj = CellsMsgingTestObject()
         test_obj.test = 'meow'
@@ -303,7 +304,7 @@ class CellsMessageClassesTestCase(test.TestCase):
         self.assertEqual(2, call_info['kwargs']['arg2'])
         # Verify we get a new object with what we expect.
         obj = call_info['kwargs']['obj']
-        self.assertTrue(isinstance(obj, CellsMsgingTestObject))
+        self.assertIsInstance(obj, CellsMsgingTestObject)
         self.assertNotEqual(id(test_obj), id(obj))
         self.assertEqual(test_obj.test, obj.test)
 
@@ -962,7 +963,7 @@ class CellsTargetedMethodsTestCase(test.TestCase):
         response = self.src_msg_runner.task_log_get_all(self.ctxt,
                 self.tgt_cell_name, task_name, begin, end, host=host,
                 state=state)
-        self.assertTrue(isinstance(response, list))
+        self.assertIsInstance(response, list)
         self.assertEqual(1, len(response))
         result = response[0].value_or_raise()
         self.assertEqual(['fake_result'], result)

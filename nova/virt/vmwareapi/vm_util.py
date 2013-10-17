@@ -20,6 +20,7 @@
 The VMware API VM utility module to build SOAP object specs.
 """
 
+import collections
 import copy
 
 from nova import exception
@@ -287,7 +288,7 @@ def get_vmdk_path_and_adapter_type(hardware_devices):
     if hardware_devices.__class__.__name__ == "ArrayOfVirtualDevice":
         hardware_devices = hardware_devices.VirtualDevice
     vmdk_file_path = None
-    vmdk_controler_key = None
+    vmdk_controller_key = None
     disk_type = None
     unit_number = 0
 
@@ -297,7 +298,7 @@ def get_vmdk_path_and_adapter_type(hardware_devices):
             if device.backing.__class__.__name__ == \
                     "VirtualDiskFlatVer2BackingInfo":
                 vmdk_file_path = device.backing.fileName
-                vmdk_controler_key = device.controllerKey
+                vmdk_controller_key = device.controllerKey
                 if getattr(device.backing, 'thinProvisioned', False):
                     disk_type = "thin"
                 else:
@@ -316,9 +317,9 @@ def get_vmdk_path_and_adapter_type(hardware_devices):
         elif device.__class__.__name__ == "VirtualLsiLogicSASController":
             adapter_type_dict[device.key] = "lsiLogicsas"
 
-    adapter_type = adapter_type_dict.get(vmdk_controler_key, "")
+    adapter_type = adapter_type_dict.get(vmdk_controller_key, "")
 
-    return (vmdk_file_path, vmdk_controler_key, adapter_type,
+    return (vmdk_file_path, vmdk_controller_key, adapter_type,
             disk_type, unit_number)
 
 
@@ -557,7 +558,7 @@ def get_add_vswitch_port_group_spec(client_factory, vswitch_name,
     return vswitch_port_group_spec
 
 
-def get_vnc_config_spec(client_factory, port, password):
+def get_vnc_config_spec(client_factory, port):
     """Builds the vnc config spec."""
     virtual_machine_config_spec = client_factory.create(
                                     'ns0:VirtualMachineConfigSpec')
@@ -569,15 +570,6 @@ def get_vnc_config_spec(client_factory, port, password):
     opt_port.key = "RemoteDisplay.vnc.port"
     opt_port.value = port
     extras = [opt_enabled, opt_port]
-    if password:
-        LOG.deprecated(_("The password-based access to VNC consoles will be "
-                         "removed in the next release. Please, switch to "
-                         "using the default value (this will disable password "
-                         "protection on the VNC console)."))
-        opt_pass = client_factory.create('ns0:OptionValue')
-        opt_pass.key = "RemoteDisplay.vnc.password"
-        opt_pass.value = password
-        extras.append(opt_pass)
     virtual_machine_config_spec.extraConfig = extras
     return virtual_machine_config_spec
 
@@ -834,20 +826,73 @@ def get_host_ref(session, cluster=None):
     return host_mor
 
 
+def propset_dict(propset):
+    """Turn a propset list into a dictionary
+
+    PropSet is an optional attribute on ObjectContent objects
+    that are returned by the VMware API.
+
+    You can read more about these at:
+    http://pubs.vmware.com/vsphere-51/index.jsp
+        #com.vmware.wssdk.apiref.doc/
+            vmodl.query.PropertyCollector.ObjectContent.html
+
+    :param propset: a property "set" from ObjectContent
+    :return: dictionary representing property set
+    """
+    if propset is None:
+        return {}
+
+    #TODO(hartsocks): once support for Python 2.6 is dropped
+    # change to {[(prop.name, prop.val) for prop in propset]}
+    return dict([(prop.name, prop.val) for prop in propset])
+
+
 def _get_datastore_ref_and_name(data_stores, datastore_regex=None):
-    for elem in data_stores.objects:
-        propset_dict = dict([(prop.name, prop.val) for prop in elem.propSet])
+    # selects the datastore with the most freespace
+    """Find a usable datastore in a given RetrieveResult object.
+
+    :param data_stores: a RetrieveResult object from vSphere API call
+    :param datastore_regex: an optional regular expression to match names
+    :return: datastore_ref, datastore_name, capacity, freespace
+    """
+    DSRecord = collections.namedtuple(
+        'DSRecord', ['datastore', 'name', 'capacity', 'freespace'])
+
+    # we lean on checks performed in caller methods to validate the
+    # datastore reference is not None. If it is, the caller handles
+    # a None reference as appropriate in its context.
+    found_ds = DSRecord(datastore=None, name=None, capacity=None, freespace=0)
+
+    # datastores is actually a RetrieveResult object from vSphere API call
+    for obj_content in data_stores.objects:
+        # the propset attribute "need not be set" by returning API
+        if not hasattr(obj_content, 'propSet'):
+            continue
+
+        propdict = propset_dict(obj_content.propSet)
         # Local storage identifier vSphere doesn't support CIFS or
         # vfat for datastores, therefore filtered
-        ds_type = propset_dict['summary.type']
-        ds_name = propset_dict['summary.name']
+        ds_type = propdict['summary.type']
+        ds_name = propdict['summary.name']
         if ((ds_type == 'VMFS' or ds_type == 'NFS') and
-                propset_dict['summary.accessible']):
-            if not datastore_regex or datastore_regex.match(ds_name):
-                return (elem.obj,
-                        ds_name,
-                        propset_dict['summary.capacity'],
-                        propset_dict['summary.freeSpace'])
+                propdict['summary.accessible']):
+            if datastore_regex is None or datastore_regex.match(ds_name):
+                new_ds = DSRecord(
+                    datastore=obj_content.obj,
+                    name=ds_name,
+                    capacity=propdict['summary.capacity'],
+                    freespace=propdict['summary.freeSpace'])
+                # find the largest freespace to return
+                if new_ds.freespace > found_ds.freespace:
+                    found_ds = new_ds
+
+    #TODO(hartsocks): refactor driver to use DSRecord namedtuple
+    # using DSRecord through out will help keep related information
+    # together and improve readability and organisation of the code.
+    if found_ds.datastore is not None:
+        return (found_ds.datastore, found_ds.name,
+                    found_ds.capacity, found_ds.freespace)
 
 
 def get_datastore_ref_and_name(session, cluster=None, host=None,

@@ -32,11 +32,13 @@ from nova.compute import api as compute_api
 from nova.compute import flavors
 from nova.compute import power_state
 from nova.compute import task_states
+from nova.compute import utils as compute_utils
 from nova.compute import vm_states
 from nova import context
 from nova import crypto
 from nova import db
 from nova import exception
+from nova.objects import aggregate as aggregate_obj
 from nova.openstack.common.gettextutils import _
 from nova.openstack.common import importutils
 from nova.openstack.common import jsonutils
@@ -48,6 +50,7 @@ from nova.tests import fake_network
 from nova.tests import fake_processutils
 import nova.tests.image.fake as fake_image
 from nova.tests import matchers
+from nova.tests.objects import test_aggregate
 from nova.tests.virt.xenapi import stubs
 from nova.virt import fake
 from nova.virt.xenapi import agent
@@ -548,7 +551,7 @@ class XenAPIVMTestCase(stubs.XenAPITestBase):
             self.fake_upload_called = True
             self.assertEqual(ctx, self.context)
             self.assertEqual(inst, instance)
-            self.assertTrue(isinstance(vdi_uuids, list))
+            self.assertIsInstance(vdi_uuids, list)
             self.assertEqual(img_id, image_id)
 
         self.stubs.Set(glance.GlanceStore, 'upload_image',
@@ -627,7 +630,7 @@ class XenAPIVMTestCase(stubs.XenAPITestBase):
 
         if check_injection:
             xenstore_data = self.vm['xenstore_data']
-            self.assertFalse('vm-data/hostname' in xenstore_data)
+            self.assertNotIn('vm-data/hostname', xenstore_data)
             key = 'vm-data/networking/DEADBEEF0001'
             xenstore_value = xenstore_data[key]
             tcpip_data = ast.literal_eval(xenstore_value)
@@ -757,8 +760,8 @@ class XenAPIVMTestCase(stubs.XenAPITestBase):
                         'herp', network_info, block_device_info)
         self.create_vm_record(self.conn, os_type, instance['name'])
         self.check_vm_record(self.conn, instance_type_id, check_injection)
-        self.assertTrue(instance['os_type'])
-        self.assertTrue(instance['architecture'])
+        self.assertEqual(instance['os_type'], os_type)
+        self.assertEqual(instance['architecture'], architecture)
 
     def test_spawn_ipxe_iso_success(self):
         self.mox.StubOutWithMock(vm_utils, 'get_sr_path')
@@ -870,7 +873,7 @@ class XenAPIVMTestCase(stubs.XenAPITestBase):
         self.assertEqual(start_vms, end_vms)
 
     def test_spawn_raw_glance(self):
-        self._test_spawn(IMAGE_RAW, None, None)
+        self._test_spawn(IMAGE_RAW, None, None, os_type=None)
         self.check_vm_params_for_windows()
 
     def test_spawn_vhd_glance_linux(self):
@@ -1180,7 +1183,7 @@ class XenAPIVMTestCase(stubs.XenAPITestBase):
                          os_type="linux", architecture="x86-64")
         self.assertTrue(fake_resetnetwork.called)
 
-    def _test_spawn_fails_with(self, trigger, expected_exception):
+    def _test_spawn_fails_silently_with(self, trigger, expected_exception):
         self.flags(xenapi_use_agent_default=True)
         self.flags(agent_version_timeout=0)
         actual_injected_files = []
@@ -1191,18 +1194,26 @@ class XenAPIVMTestCase(stubs.XenAPITestBase):
         self.stubs.Set(stubs.FakeSessionForVMTests,
                        '_plugin_agent_version', fake_agent_version)
 
-        self.assertRaises(expected_exception, self._test_spawn,
-                IMAGE_VHD, None, None, os_type="linux", architecture="x86-64")
+        def fake_add_instance_fault(*args, **kwargs):
+            self.assertEqual(expected_exception, args[3])
+
+        self.stubs.Set(compute_utils, 'add_instance_fault_from_exc',
+                       fake_add_instance_fault)
+
+        self._test_spawn(IMAGE_VHD, None, None,
+                         os_type="linux", architecture="x86-64")
 
     def test_spawn_fails_with_agent_timeout(self):
-        self._test_spawn_fails_with("TIMEOUT:fake", exception.AgentTimeout)
+        self._test_spawn_fails_silently_with("TIMEOUT:fake",
+                                             exception.AgentTimeout)
 
     def test_spawn_fails_with_agent_not_implemented(self):
-        self._test_spawn_fails_with("NOT IMPLEMENTED:fake",
-                                    exception.AgentNotImplemented)
+        self._test_spawn_fails_silently_with("NOT IMPLEMENTED:fake",
+                                             exception.AgentNotImplemented)
 
     def test_spawn_fails_with_agent_error(self):
-        self._test_spawn_fails_with("fake_error", exception.AgentError)
+        self._test_spawn_fails_silently_with("fake_error",
+                                             exception.AgentError)
 
     def test_spawn_fails_with_agent_bad_return(self):
         self.flags(xenapi_use_agent_default=True)
@@ -1214,8 +1225,9 @@ class XenAPIVMTestCase(stubs.XenAPITestBase):
         self.stubs.Set(stubs.FakeSessionForVMTests,
                        '_plugin_agent_version', fake_agent_version)
 
-        self.assertRaises(exception.AgentError, self._test_spawn,
-                IMAGE_VHD, None, None, os_type="linux", architecture="x86-64")
+        exception.AgentError
+        self._test_spawn(IMAGE_VHD, None, None,
+                         os_type="linux", architecture="x86-64")
 
     def test_spawn_fails_agent_not_implemented(self):
         # Test spawning with injected_files.
@@ -1228,8 +1240,9 @@ class XenAPIVMTestCase(stubs.XenAPITestBase):
         self.stubs.Set(stubs.FakeSessionForVMTests,
                        '_plugin_agent_version', fake_agent_version)
 
-        self.assertRaises(exception.AgentNotImplemented, self._test_spawn,
-                IMAGE_VHD, None, None, os_type="linux", architecture="x86-64")
+        exception.AgentNotImplemented
+        self._test_spawn(IMAGE_VHD, None, None,
+                         os_type="linux", architecture="x86-64")
 
     def test_rescue(self):
         instance = self._create_instance()
@@ -1256,7 +1269,7 @@ class XenAPIVMTestCase(stubs.XenAPITestBase):
         vdi_uuids = []
         for vbd_uuid in rescue_vm["VBDs"]:
             vdi_uuids.append(xenapi_fake.get_record('VBD', vbd_uuid)["VDI"])
-        self.assertTrue("swap" not in vdi_uuids)
+        self.assertNotIn("swap", vdi_uuids)
 
     def test_rescue_preserve_disk_on_failure(self):
         # test that the original disk is preserved if rescue setup fails
@@ -1397,10 +1410,10 @@ class XenAPIVMTestCase(stubs.XenAPITestBase):
 
         def fake_aggregate_get(context, host, key):
             if find_aggregate:
-                return [{'fake': 'aggregate'}]
+                return [test_aggregate.fake_aggregate]
             else:
                 return []
-        self.stubs.Set(self.conn.virtapi, 'aggregate_get_by_host',
+        self.stubs.Set(db, 'aggregate_get_by_host',
                        fake_aggregate_get)
 
         def fake_host_find(context, session, src, dst):
@@ -1454,7 +1467,7 @@ class XenAPIVMTestCase(stubs.XenAPITestBase):
         def fake_aggregate_get_by_host(self, *args, **kwargs):
             was['called'] = True
             raise test.TestingException()
-        self.stubs.Set(self.conn._session._virtapi, "aggregate_get_by_host",
+        self.stubs.Set(db, "aggregate_get_by_host",
                        fake_aggregate_get_by_host)
 
         self.stubs.Set(self.conn._session, "is_slave", True)
@@ -1682,7 +1695,7 @@ class XenAPIMigrateInstance(stubs.XenAPITestBase):
 
         def fake_raise(*args, **kwargs):
             raise exception.MigrationError(reason='test failure')
-        self.stubs.Set(vmops.VMOps, "_migrate_vhd", fake_raise)
+        self.stubs.Set(vmops.VMOps, "_migrate_disk_resizing_up", fake_raise)
 
         conn = xenapi_conn.XenAPIDriver(fake.FakeVirtAPI(), False)
         self.assertRaises(exception.MigrationError,
@@ -1906,7 +1919,7 @@ class XenAPIMigrateInstance(stubs.XenAPITestBase):
                                 exception.ResizeError(reason="asdf"))
 
         vm_utils.destroy_vdi(vmops._session, new_vdi_ref)
-        vmops._restore_orig_vm_and_cleanup_orphan(instance, None)
+        vmops._restore_orig_vm_and_cleanup_orphan(instance)
 
         self.mox.ReplayAll()
 
@@ -2037,56 +2050,6 @@ class XenAPIDetermineDiskImageTestCase(test.NoDBTestCase):
     def test_none(self):
         image_meta = None
         self.assert_disk_type(image_meta, None)
-
-
-class XenAPIDetermineIsPVTestCase(test.NoDBTestCase):
-    """Unit tests for code that detects the PV status based on ImageType."""
-    def assert_pv_status(self, disk_image_type, os_type, expected_pv_status):
-        session = None
-        vdi_ref = None
-        actual = vm_utils.determine_is_pv(session, vdi_ref,
-                                          disk_image_type, os_type)
-        self.assertEqual(expected_pv_status, actual)
-
-    def test_windows_vhd(self):
-        self.assert_pv_status(vm_utils.ImageType.DISK_VHD, 'windows', False)
-
-    def test_linux_vhd(self):
-        self.assert_pv_status(vm_utils.ImageType.DISK_VHD, 'linux', True)
-
-    def test_raw(self):
-        self.assert_pv_status(vm_utils.ImageType.DISK_RAW, 'linux', False)
-
-    def test_disk(self):
-        self.assert_pv_status(vm_utils.ImageType.DISK, None, True)
-
-    def test_iso(self):
-        self.assert_pv_status(vm_utils.ImageType.DISK_ISO, None, False)
-
-    def test_none(self):
-        self.assert_pv_status(None, None, False)
-
-
-class CompareVersionTestCase(test.NoDBTestCase):
-    def test_less_than(self):
-        # Test that cmp_version compares a as less than b.
-        self.assertTrue(vmops.cmp_version('1.2.3.4', '1.2.3.5') < 0)
-
-    def test_greater_than(self):
-        # Test that cmp_version compares a as greater than b.
-        self.assertTrue(vmops.cmp_version('1.2.3.5', '1.2.3.4') > 0)
-
-    def test_equal(self):
-        # Test that cmp_version compares a as equal to b.
-        self.assertTrue(vmops.cmp_version('1.2.3.4', '1.2.3.4') == 0)
-
-    def test_non_lexical(self):
-        # Test that cmp_version compares non-lexically.
-        self.assertTrue(vmops.cmp_version('1.2.3.10', '1.2.3.4') > 0)
-
-    def test_length(self):
-        # Test that cmp_version compares by length as last resort.
-        self.assertTrue(vmops.cmp_version('1.2.3', '1.2.3.4') < 0)
 
 
 class XenAPIHostTestCase(stubs.XenAPITestBase):
@@ -2287,7 +2250,7 @@ class XenAPIAutoDiskConfigTestCase(stubs.XenAPITestBase):
         vdis = {'root': {'uuid': vdi_uuid, 'ref': vdi_ref}}
 
         self.conn._vmops._attach_disks(instance, vm_ref, instance['name'],
-                                       vdis, disk_image_type)
+                                       vdis, disk_image_type, "fake_nw_inf")
 
         self.assertEqual(marker["partition_called"], called)
 
@@ -2379,7 +2342,7 @@ class XenAPIGenerateLocal(stubs.XenAPITestBase):
 
         self.called = False
         self.conn._vmops._attach_disks(instance, vm_ref, instance['name'],
-                                       vdis, disk_image_type)
+                                       vdis, disk_image_type, "fake_nw_inf")
         self.assertTrue(self.called)
 
     def test_generate_swap(self):
@@ -3009,18 +2972,17 @@ class XenAPIAggregateTestCase(stubs.XenAPITestBase):
                        fake_pool_set_name_label)
         self.conn._session.call_xenapi("pool.create", {"name": "asdf"})
 
-        values = {"name": 'fake_aggregate',
-                  'metadata': {'availability_zone': 'fake_zone'}}
-        result = db.aggregate_create(self.context, values)
         metadata = {'availability_zone': 'fake_zone',
                     pool_states.POOL_FLAG: "XenAPI",
                     pool_states.KEY: pool_states.CREATED}
-        db.aggregate_metadata_add(self.context, result['id'], metadata)
 
-        db.aggregate_host_add(self.context, result['id'], "host")
-        aggregate = db.aggregate_get(self.context, result['id'])
-        self.assertEqual(["host"], aggregate['hosts'])
-        self.assertEqual(metadata, aggregate['metadetails'])
+        aggregate = aggregate_obj.Aggregate()
+        aggregate.name = 'fake_aggregate'
+        aggregate.metadata = dict(metadata)
+        aggregate.create(self.context)
+        aggregate.add_host('host')
+        self.assertEqual(["host"], aggregate.hosts)
+        self.assertEqual(metadata, aggregate.metadata)
 
         self.conn._pool.add_to_aggregate(self.context, aggregate, "host")
         self.assertTrue(fake_pool_set_name_label.called)
@@ -3081,18 +3043,18 @@ class XenAPIAggregateTestCase(stubs.XenAPITestBase):
                          aggr_zone='fake_zone',
                          aggr_state=pool_states.CREATED,
                          hosts=['host'], metadata=None):
-        values = {"name": aggr_name}
-        result = db.aggregate_create(self.context, values,
-                metadata={'availability_zone': aggr_zone})
-        pool_flag = {pool_states.POOL_FLAG: "XenAPI",
-                    pool_states.KEY: aggr_state}
-        db.aggregate_metadata_add(self.context, result['id'], pool_flag)
-
-        for host in hosts:
-            db.aggregate_host_add(self.context, result['id'], host)
+        aggregate = aggregate_obj.Aggregate()
+        aggregate.name = aggr_name
+        aggregate.metadata = {'availability_zone': aggr_zone,
+                              pool_states.POOL_FLAG: 'XenAPI',
+                              pool_states.KEY: aggr_state,
+                              }
         if metadata:
-            db.aggregate_metadata_add(self.context, result['id'], metadata)
-        return db.aggregate_get(self.context, result['id'])
+            aggregate.metadata.update(metadata)
+        aggregate.create(self.context)
+        for host in hosts:
+            aggregate.add_host(host)
+        return aggregate
 
     def test_add_host_to_aggregate_invalid_changing_status(self):
         """Ensure InvalidAggregateAction is raised when adding host while
@@ -3228,7 +3190,7 @@ class HypervisorPoolTestCase(test.NoDBTestCase):
     fake_aggregate = {
         'id': 98,
         'hosts': [],
-        'metadetails': {
+        'metadata': {
             'master_compute': 'master',
             pool_states.POOL_FLAG: {},
             pool_states.KEY: {}
@@ -3471,13 +3433,10 @@ class XenAPILiveMigrateTestCase(stubs.XenAPITestBase):
         stubs.stubout_session(self.stubs, stubs.FakeSessionForVMTests)
         self.conn = xenapi_conn.XenAPIDriver(fake.FakeVirtAPI(), False)
 
-        class fake_aggregate:
-            def __init__(self):
-                self.metadetails = {"host": "test_host_uuid"}
-
         def fake_aggregate_get_by_host(context, host, key=None):
             self.assertEqual(CONF.host, host)
-            return [fake_aggregate()]
+            return [dict(test_aggregate.fake_aggregate,
+                         metadetails={"host": "test_host_uuid"})]
 
         self.stubs.Set(db, "aggregate_get_by_host",
                 fake_aggregate_get_by_host)
@@ -3488,13 +3447,10 @@ class XenAPILiveMigrateTestCase(stubs.XenAPITestBase):
         stubs.stubout_session(self.stubs, stubs.FakeSessionForVMTests)
         self.conn = xenapi_conn.XenAPIDriver(fake.FakeVirtAPI(), False)
 
-        class fake_aggregate:
-            def __init__(self):
-                self.metadetails = {"dest_other": "test_host_uuid"}
-
         def fake_aggregate_get_by_host(context, host, key=None):
             self.assertEqual(CONF.host, host)
-            return [fake_aggregate()]
+            return [dict(test_aggregate.fake_aggregate,
+                         metadetails={"dest_other": "test_host_uuid"})]
 
         self.stubs.Set(db, "aggregate_get_by_host",
                       fake_aggregate_get_by_host)

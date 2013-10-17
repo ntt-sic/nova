@@ -170,9 +170,16 @@ policy_data = """
     "compute_extension:v3:os-extended-volumes:swap": "",
     "compute_extension:v3:os-extended-volumes:attach": "",
     "compute_extension:v3:os-extended-volumes:detach": "",
+    "compute_extension:v3:extensions:discoverable": "",
     "compute_extension:fixed_ips": "",
     "compute_extension:flavor_access": "",
+    "compute_extension:flavor_access:addTenantAccess": "rule:admin_api",
+    "compute_extension:flavor_access:removeTenantAccess": "rule:admin_api",
     "compute_extension:v3:os-flavor-access": "",
+    "compute_extension:v3:os-flavor-access:remove_tenant_access":
+    "rule:admin_api",
+    "compute_extension:v3:os-flavor-access:add_tenant_access":
+    "rule:admin_api",
     "compute_extension:flavor_disabled": "",
     "compute_extension:v3:os-flavor-disabled": "",
     "compute_extension:flavor_rxtx": "",

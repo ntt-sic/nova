@@ -23,7 +23,6 @@ their attributes like VDIs, VIFs, as well as their lookup functions.
 
 import contextlib
 import os
-import re
 import time
 import urllib
 import urlparse
@@ -38,6 +37,7 @@ from nova import block_device
 from nova.compute import flavors
 from nova.compute import power_state
 from nova.compute import task_states
+from nova.compute import vm_mode
 from nova import exception
 from nova.network import model as network_model
 from nova.openstack.common import excutils
@@ -249,7 +249,7 @@ def create_vm(session, instance, name_label, kernel, ramdisk,
         'VCPUs_at_startup': vcpus,
         'VCPUs_max': vcpus,
         'VCPUs_params': vcpu_params,
-        'xenstore_data': {'allowvssprovider': 'false'}}
+        'xenstore_data': {'vm-data/allowvssprovider': 'false'}}
 
     # Complete VM configuration record according to the image type
     # non-raw/raw with PV kernel/raw in HVM mode
@@ -634,20 +634,39 @@ def _set_vdi_info(session, vdi_ref, vdi_type, name_label, description,
                     "VDI.add_to_other_config", vdi_ref, key, value)
 
 
+def _vm_get_vbd_refs(session, vm_ref):
+    return session.call_xenapi("VM.get_VBDs", vm_ref)
+
+
+def _vbd_get_rec(session, vbd_ref):
+    return session.call_xenapi("VBD.get_record", vbd_ref)
+
+
+def _vdi_get_rec(session, vdi_ref):
+    return session.call_xenapi("VDI.get_record", vdi_ref)
+
+
 def get_vdi_for_vm_safely(session, vm_ref):
     """Retrieves the primary VDI for a VM."""
-    vbd_refs = session.call_xenapi("VM.get_VBDs", vm_ref)
-    for vbd in vbd_refs:
-        vbd_rec = session.call_xenapi("VBD.get_record", vbd)
+    vbd_refs = _vm_get_vbd_refs(session, vm_ref)
+    for vbd_ref in vbd_refs:
+        vbd_rec = _vbd_get_rec(session, vbd_ref)
         # Convention dictates the primary VDI will be userdevice 0
         if vbd_rec['userdevice'] == '0':
-            vdi_rec = session.call_xenapi("VDI.get_record", vbd_rec['VDI'])
-            return vbd_rec['VDI'], vdi_rec
+            vdi_ref = vbd_rec['VDI']
+            vdi_rec = _vdi_get_rec(session, vdi_ref)
+            return vdi_ref, vdi_rec
     raise exception.NovaException(_("No primary VDI found for %s") % vm_ref)
 
 
 @contextlib.contextmanager
 def snapshot_attached_here(session, instance, vm_ref, label, *args):
+    # impl method allow easier patching for tests
+    return _snapshot_attached_here_impl(session, instance, vm_ref, label,
+                                        *args)
+
+
+def _snapshot_attached_here_impl(session, instance, vm_ref, label, *args):
     update_task_state = None
     if len(args) == 1:
         update_task_state = args[0]
@@ -772,8 +791,15 @@ def _find_cached_images(session, sr_ref):
 
 def _find_cached_image(session, image_id, sr_ref):
     """Returns the vdi-ref of the cached image."""
-    cached_images = _find_cached_images(session, sr_ref)
-    return cached_images.get(image_id)
+    name_label = _get_image_vdi_label(image_id)
+    recs = session.call_xenapi("VDI.get_all_records_where",
+                               'field "name__label"="%s"'
+                               % name_label)
+    number_found = len(recs)
+    if number_found > 0:
+        if number_found > 1:
+            LOG.warn(_("Multiple base images for image: %s") % image_id)
+        return recs.keys()[0]
 
 
 def resize_disk(session, instance, vdi_ref, instance_type):
@@ -782,14 +808,12 @@ def resize_disk(session, instance, vdi_ref, instance_type):
         reason = _("Can't resize a disk to 0 GB.")
         raise exception.ResizeError(reason=reason)
 
-    # Copy VDI over to something we can resize
-    # NOTE(jerdfelt): Would be nice to just set vdi_ref to read/write
     sr_ref = safe_find_sr(session)
-    copy_ref = session.call_xenapi('VDI.copy', vdi_ref, sr_ref)
+    clone_ref = _clone_vdi(session, vdi_ref)
 
     try:
         # Resize partition and filesystem down
-        _auto_configure_disk(session, copy_ref, size_gb)
+        _auto_configure_disk(session, clone_ref, size_gb)
 
         # Create new VDI
         vdi_size = size_gb * 1024 * 1024 * 1024
@@ -802,11 +826,11 @@ def resize_disk(session, instance, vdi_ref, instance_type):
 
         # Manually copy contents over
         virtual_size = size_gb * 1024 * 1024 * 1024
-        _copy_partition(session, copy_ref, new_ref, 1, virtual_size)
+        _copy_partition(session, clone_ref, new_ref, 1, virtual_size)
 
         return new_ref, new_uuid
     finally:
-        destroy_vdi(session, copy_ref)
+        destroy_vdi(session, clone_ref)
 
 
 def _auto_configure_disk(session, vdi_ref, new_gb):
@@ -987,7 +1011,7 @@ def generate_iso_blank_root_disk(session, instance, vm_ref, userdevice,
 
 
 def generate_configdrive(session, instance, vm_ref, userdevice,
-                         admin_password=None, files=None):
+                         network_info, admin_password=None, files=None):
     sr_ref = safe_find_sr(session)
     vdi_ref = create_vdi(session, sr_ref, instance, 'config-2',
                          'configdrive', configdrive.CONFIGDRIVESIZE_BYTES)
@@ -998,8 +1022,8 @@ def generate_configdrive(session, instance, vm_ref, userdevice,
             if admin_password:
                 extra_md['admin_pass'] = admin_password
             inst_md = instance_metadata.InstanceMetadata(instance,
-                                                         content=files,
-                                                         extra_md=extra_md)
+                    content=files, extra_md=extra_md,
+                    network_info=network_info)
             with configdrive.ConfigDriveBuilder(instance_md=inst_md) as cdb:
                 with utils.tempdir() as tmp_path:
                     tmp_file = os.path.join(tmp_path, 'configdrive')
@@ -1070,43 +1094,60 @@ def destroy_kernel_ramdisk(session, instance, kernel, ramdisk):
         session.call_plugin('kernel', 'remove_kernel_ramdisk', args)
 
 
+def _get_image_vdi_label(image_id):
+    return 'Glance Image %s' % image_id
+
+
 def _create_cached_image(context, session, instance, name_label,
                          image_id, image_type):
     sr_ref = safe_find_sr(session)
     sr_type = session.call_xenapi('SR.get_record', sr_ref)["type"]
-    vdis = {}
 
     if CONF.use_cow_images and sr_type != "ext":
         LOG.warning(_("Fast cloning is only supported on default local SR "
                       "of type ext. SR on this system was found to be of "
                       "type %s. Ignoring the cow flag."), sr_type)
 
-    cache_vdi_ref = _find_cached_image(session, image_id, sr_ref)
-    if cache_vdi_ref is None:
-        vdis = _fetch_image(context, session, instance, name_label,
-                            image_id, image_type)
+    @utils.synchronized('xenapi-image-cache' + image_id)
+    def _create_cached_image_impl(context, session, instance, name_label,
+                                  image_id, image_type, sr_ref):
+        cache_vdi_ref = _find_cached_image(session, image_id, sr_ref)
+        if cache_vdi_ref is None:
+            vdis = _fetch_image(context, session, instance, name_label,
+                                image_id, image_type)
 
-        cache_vdi_ref = session.call_xenapi(
-                'VDI.get_by_uuid', vdis['root']['uuid'])
+            cache_vdi_ref = session.call_xenapi(
+                    'VDI.get_by_uuid', vdis['root']['uuid'])
 
-        session.call_xenapi('VDI.set_name_label', cache_vdi_ref,
-                            'Glance Image %s' % image_id)
-        session.call_xenapi('VDI.set_name_description', cache_vdi_ref, 'root')
-        session.call_xenapi('VDI.add_to_other_config',
-                            cache_vdi_ref, 'image-id', str(image_id))
+            session.call_xenapi('VDI.set_name_label', cache_vdi_ref,
+                                _get_image_vdi_label(image_id))
+            session.call_xenapi('VDI.set_name_description', cache_vdi_ref,
+                                'root')
+            session.call_xenapi('VDI.add_to_other_config',
+                                cache_vdi_ref, 'image-id', str(image_id))
 
-    if CONF.use_cow_images and sr_type == 'ext':
-        new_vdi_ref = _clone_vdi(session, cache_vdi_ref)
-    elif sr_type == 'ext':
-        new_vdi_ref = _safe_copy_vdi(session, sr_ref, instance, cache_vdi_ref)
-    else:
-        new_vdi_ref = session.call_xenapi("VDI.copy", cache_vdi_ref, sr_ref)
+        if CONF.use_cow_images and sr_type == 'ext':
+            new_vdi_ref = _clone_vdi(session, cache_vdi_ref)
+        elif sr_type == 'ext':
+            new_vdi_ref = _safe_copy_vdi(session, sr_ref, instance,
+                                         cache_vdi_ref)
+        else:
+            new_vdi_ref = session.call_xenapi("VDI.copy", cache_vdi_ref,
+                                              sr_ref)
 
-    session.call_xenapi('VDI.remove_from_other_config',
-                        new_vdi_ref, 'image-id')
+        session.call_xenapi('VDI.set_name_label', cache_vdi_ref, '')
+        session.call_xenapi('VDI.set_name_description', cache_vdi_ref, '')
+        session.call_xenapi('VDI.remove_from_other_config',
+                            new_vdi_ref, 'image-id')
 
+        vdi_uuid = session.call_xenapi('VDI.get_uuid', new_vdi_ref)
+        return vdi_uuid
+
+    vdi_uuid = _create_cached_image_impl(context, session, instance,
+            name_label, image_id, image_type, sr_ref)
+
+    vdis = {}
     vdi_type = ImageType.get_role(image_type)
-    vdi_uuid = session.call_xenapi('VDI.get_uuid', new_vdi_ref)
     vdis[vdi_type] = dict(uuid=vdi_uuid, file=None)
     return vdis
 
@@ -1120,7 +1161,7 @@ def _create_image(context, session, instance, name_label, image_id,
     """
     cache_images = CONF.cache_images.lower()
 
-    # Deterimine if the image is cacheable
+    # Determine if the image is cacheable
     if image_type == ImageType.DISK_ISO:
         cache = False
     elif cache_images == 'all':
@@ -1447,48 +1488,24 @@ def determine_disk_image_type(image_meta):
     return image_type
 
 
-def determine_is_pv(session, vdi_ref, disk_image_type, os_type):
-    """
-    Determine whether the VM will use a paravirtualized kernel or if it
-    will use hardware virtualization.
+def determine_vm_mode(instance, disk_image_type):
+    current_mode = vm_mode.get_from_instance(instance)
+    if current_mode == vm_mode.XEN or current_mode == vm_mode.HVM:
+        return current_mode
 
-        1. Glance (VHD): if `os_type` is windows, HVM, otherwise PV
+    os_type = instance['os_type']
+    if os_type == "linux":
+        return vm_mode.XEN
+    if os_type == "windows":
+        return vm_mode.HVM
 
-        2. Glance (DISK_RAW): HVM
+    # disk_image_type specific default for backwards compatibility
+    if disk_image_type == ImageType.DISK_VHD or \
+            disk_image_type == ImageType.DISK:
+        return vm_mode.XEN
 
-        3. Glance (DISK): PV
-
-        4. Glance (DISK_ISO): HVM
-
-        5. Boot From Volume - without image metadata (None): use HVM
-           NOTE: if disk_image_type is not specified, instances launched
-           from remote volumes will have to include kernel and ramdisk
-           because external kernel and ramdisk will not be fetched.
-    """
-
-    LOG.debug(_("Looking up vdi %s for PV kernel"), vdi_ref)
-    if disk_image_type == ImageType.DISK_VHD:
-        # 1. VHD
-        if os_type == 'windows':
-            is_pv = False
-        else:
-            is_pv = True
-    elif disk_image_type == ImageType.DISK_RAW:
-        # 2. RAW
-        is_pv = False
-    elif disk_image_type == ImageType.DISK:
-        # 3. Disk
-        is_pv = True
-    elif disk_image_type == ImageType.DISK_ISO:
-        # 4. ISO
-        is_pv = False
-    elif not disk_image_type:
-        is_pv = False
-    else:
-        raise exception.NovaException(_("Unknown image format %s") %
-                                      disk_image_type)
-
-    return is_pv
+    # most images run OK as HVM
+    return vm_mode.HVM
 
 
 def set_vm_name_label(session, vm_ref, name_label):
@@ -2076,16 +2093,7 @@ def _write_partition(session, virtual_size, dev):
         return utils.execute(*cmd, **kwargs)
 
     _make_partition(session, dev, "%ds" % primary_first, "%ds" % primary_last)
-
     LOG.debug(_('Writing partition table %s done.'), dev_path)
-
-
-def _get_min_sectors(partition_path, block_size=4096):
-    stdout, _err = utils.execute('resize2fs', '-P', partition_path,
-        run_as_root=True)
-    min_size_blocks = long(re.sub('[^0-9]', '', stdout))
-    min_size_bytes = min_size_blocks * block_size
-    return min_size_bytes / SECTOR_SIZE
 
 
 def _repair_filesystem(partition_path):
@@ -2116,15 +2124,15 @@ def _resize_part_and_fs(dev, start, old_sectors, new_sectors):
 
     if new_sectors < old_sectors:
         # Resizing down, resize filesystem before partition resize
-        min_sectors = _get_min_sectors(partition_path)
-        if min_sectors >= new_sectors:
-            reason = (_('Resize down not allowed because minimum '
-                       'filesystem sectors %(min_sectors)d is too big '
-                       'for target sectors %(new_sectors)d') %
-                      {'min_sectors': min_sectors, 'new_sectors': new_sectors})
+        try:
+            utils.execute('resize2fs', partition_path, '%ds' % size,
+                          run_as_root=True)
+        except processutils.ProcessExecutionError as exc:
+            LOG.error(str(exc))
+            reason = _("Shrinking the filesystem down with resize2fs "
+                       "has failed, please check if you have "
+                       "enough free space on your disk.")
             raise exception.ResizeError(reason=reason)
-        utils.execute('resize2fs', partition_path, '%ds' % size,
-                      run_as_root=True)
 
     utils.execute('parted', '--script', dev_path, 'rm', '1',
                   run_as_root=True)

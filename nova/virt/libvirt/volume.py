@@ -216,8 +216,8 @@ class LibvirtISCSIVolumeDriver(LibvirtBaseVolumeDriver):
                                    '-p', iscsi_properties['target_portal'],
                                    *iscsi_command, run_as_root=True,
                                    check_exit_code=check_exit_code)
-        LOG.debug("iscsiadm %s: stdout=%s stderr=%s" %
-                  (iscsi_command, out, err))
+        LOG.debug(_("iscsiadm %(command)s: stdout=%(out)s stderr=%(err)s"),
+                  {'command': iscsi_command, 'out': out, 'err': err})
         return (out, err)
 
     def _iscsiadm_update(self, iscsi_properties, property_key, property_value,
@@ -413,7 +413,7 @@ class LibvirtISCSIVolumeDriver(LibvirtBaseVolumeDriver):
                                    check_exit_code=[0, 255])
             except processutils.ProcessExecutionError as err:
                 #as this might be one of many paths,
-                #only set successfull logins to startup automatically
+                #only set successful logins to startup automatically
                 if err.exit_code in [15]:
                     self._iscsiadm_update(iscsi_properties,
                                           "node.startup",
@@ -477,8 +477,8 @@ class LibvirtISCSIVolumeDriver(LibvirtBaseVolumeDriver):
                                    *iscsi_command,
                                    run_as_root=True,
                                    check_exit_code=check_exit_code)
-        LOG.debug("iscsiadm %s: stdout=%s stderr=%s" %
-                  (iscsi_command, out, err))
+        LOG.debug(_("iscsiadm %(command)s: stdout=%(out)s stderr=%(err)s"),
+                  {'command': iscsi_command, 'out': out, 'err': err})
         return (out, err)
 
     def _run_multipath(self, multipath_command, **kwargs):
@@ -487,8 +487,8 @@ class LibvirtISCSIVolumeDriver(LibvirtBaseVolumeDriver):
                                    *multipath_command,
                                    run_as_root=True,
                                    check_exit_code=check_exit_code)
-        LOG.debug("multipath %s: stdout=%s stderr=%s" %
-                  (multipath_command, out, err))
+        LOG.debug(_("multipath %(command)s: stdout=%(out)s stderr=%(err)s"),
+                  {'command': multipath_command, 'out': out, 'err': err})
         return (out, err)
 
     def _rescan_iscsi(self):
@@ -665,7 +665,7 @@ class LibvirtISERVolumeDriver(LibvirtISCSIVolumeDriver):
                                    check_exit_code=[0, 255])
             except processutils.ProcessExecutionError as err:
                 # as this might be one of many paths,
-                # only set successfull logins to startup automatically
+                # only set successful logins to startup automatically
                 if err.exit_code == 15:
                     self._iscsiadm_update(iser_properties,
                                           "node.startup",
@@ -1021,7 +1021,7 @@ class LibvirtFibreChannelVolumeDriver(LibvirtBaseVolumeDriver):
             multipath_id = connection_info['data']['multipath_id']
             mdev_info = linuxscsi.find_multipath_device(multipath_id)
             devices = mdev_info['devices']
-            LOG.debug("devices to remove = %s" % devices)
+            LOG.debug(_("devices to remove = %s"), devices)
 
         # There may have been more than 1 device mounted
         # by the kernel for this volume.  We have to remove

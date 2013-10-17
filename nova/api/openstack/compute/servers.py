@@ -643,7 +643,7 @@ class Controller(wsgi.Controller):
                     network_uuid = None
                     if not utils.is_neutron():
                         # port parameter is only for neutron v2.0
-                        msg = _("Unknown argment : port")
+                        msg = _("Unknown argument : port")
                         raise exc.HTTPBadRequest(explanation=msg)
                     if not uuidutils.is_uuid_like(port_id):
                         msg = _("Bad port format: port uuid is "
@@ -669,7 +669,7 @@ class Controller(wsgi.Controller):
                     msg = _("Invalid fixed IP address (%s)") % address
                     raise exc.HTTPBadRequest(explanation=msg)
 
-                # For neutronv2, requestd_networks
+                # For neutronv2, requested_networks
                 # should be tuple of (network_uuid, fixed_ip, port_id)
                 if utils.is_neutron():
                     networks.append((network_uuid, address, port_id))
@@ -1373,7 +1373,8 @@ class Controller(wsgi.Controller):
 
         instance = self._get_server(context, req, id)
 
-        bdms = self.compute_api.get_instance_bdms(context, instance)
+        bdms = self.compute_api.get_instance_bdms(context, instance,
+                                                  legacy=False)
 
         try:
             if self.compute_api.is_volume_backed_instance(context, instance,
@@ -1385,7 +1386,8 @@ class Controller(wsgi.Controller):
                     # device is set to 'vda'. It needs to be fixed later,
                     # but tentatively we use it here.
                     image_meta = {'properties': self.compute_api.
-                                    _get_bdm_image_metadata(context, bdms)}
+                                    _get_bdm_image_metadata(context, bdms,
+                                                            legacy_bdm=False)}
                 else:
                     src_image = self.compute_api.image_service.\
                                                 show(context, img)

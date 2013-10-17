@@ -15,22 +15,25 @@
 import contextlib
 import datetime
 import iso8601
+
 import netaddr
+from testtools import matchers
 
 from nova.conductor import rpcapi as conductor_rpcapi
 from nova import context
 from nova import exception
 from nova.objects import base
+from nova.objects import fields
 from nova.objects import utils
 from nova.openstack.common import timeutils
 from nova import test
 
 
 class MyObj(base.NovaPersistentObject, base.NovaObject):
-    version = '1.5'
-    fields = {'foo': int,
-              'bar': str,
-              'missing': str,
+    VERSION = '1.5'
+    fields = {'foo': fields.Field(fields.Integer()),
+              'bar': fields.Field(fields.String()),
+              'missing': fields.Field(fields.String()),
               }
 
     @staticmethod
@@ -57,7 +60,7 @@ class MyObj(base.NovaPersistentObject, base.NovaObject):
         return 'polo'
 
     @base.remotable
-    def update_test(self, context):
+    def _update_test(self, context):
         if context.project_id == 'alternate':
             self.bar = 'alternate-context'
         else:
@@ -96,7 +99,7 @@ class RandomMixInWithNoFields(object):
 
 
 class TestSubclassedObject(RandomMixInWithNoFields, MyObj):
-    fields = {'new_field': str}
+    fields = {'new_field': fields.Field(fields.String())}
 
 
 class TestMetaclass(test.TestCase):
@@ -162,13 +165,13 @@ class TestUtils(test.TestCase):
         self.assertEqual(utils.str_or_none('foo'), 'foo')
         self.assertEqual(utils.str_or_none(1), '1')
         self.assertEqual(utils.str_or_none(None), None)
-        self.assertTrue(isinstance(utils.str_or_none('foo'), unicode))
+        self.assertIsInstance(utils.str_or_none('foo'), unicode)
 
     def test_str_value(self):
         self.assertEqual('foo', utils.str_value('foo'))
         self.assertEqual('1', utils.str_value(1))
         self.assertRaises(ValueError, utils.str_value, None)
-        self.assertTrue(isinstance(utils.str_value('foo'), unicode))
+        self.assertIsInstance(utils.str_value('foo'), unicode)
 
     def test_cstring(self):
         self.assertEqual('foo', utils.cstring('foo'))
@@ -229,11 +232,21 @@ class TestUtils(test.TestCase):
         self.assertRaises(ValueError, utils.dt_deserializer, None, 'foo')
 
     def test_obj_to_primitive_list(self):
+        class MyObjElement(base.NovaObject):
+            fields = {'foo': fields.IntegerField()}
+
+            def __init__(self, foo):
+                super(MyObjElement, self).__init__()
+                self.foo = foo
+
         class MyList(base.ObjectListBase, base.NovaObject):
-            pass
+            fields = {'objects': fields.Field(fields.List(
+                        fields.Field(fields.Object(MyObjElement))))}
+
         mylist = MyList()
-        mylist.objects = [1, 2, 3]
-        self.assertEqual([1, 2, 3], base.obj_to_primitive(mylist))
+        mylist.objects = [MyObjElement(1), MyObjElement(2), MyObjElement(3)]
+        self.assertEqual([1, 2, 3],
+                         [x['foo'] for x in base.obj_to_primitive(mylist)])
 
     def test_obj_to_primitive_dict(self):
         myobj = MyObj()
@@ -306,6 +319,17 @@ class _BaseTestCase(test.TestCase):
 
     def compare_obj(self, obj, db_obj, subs=None, allow_missing=None):
         compare_obj(self, obj, db_obj, subs=subs, allow_missing=allow_missing)
+
+    def assertNotIsInstance(self, obj, cls, msg=None):
+        """Python < v2.7 compatibility.  Assert 'not isinstance(obj, cls)."""
+        try:
+            f = super(_BaseTestCase, self).assertNotIsInstance
+        except AttributeError:
+            self.assertThat(obj,
+                            matchers.Not(matchers.IsInstance(cls)),
+                            message=msg or '')
+        else:
+            f(obj, cls, msg=msg)
 
 
 class _LocalTest(_BaseTestCase):
@@ -430,7 +454,7 @@ class _TestObject(object):
 
     def test_load_in_base(self):
         class Foo(base.NovaObject):
-            fields = {'foobar': int}
+            fields = {'foobar': fields.Field(fields.Integer())}
         obj = Foo()
         # NOTE(danms): Can't use assertRaisesRegexp() because of py26
         raised = False
@@ -473,7 +497,7 @@ class _TestObject(object):
         ctxt1 = context.RequestContext('foo', 'foo')
         ctxt2 = context.RequestContext('bar', 'alternate')
         obj = MyObj.query(ctxt1)
-        obj.update_test(ctxt2)
+        obj._update_test(ctxt2)
         self.assertEqual(obj.bar, 'alternate-context')
         self.assertRemotes()
 
@@ -481,14 +505,14 @@ class _TestObject(object):
         obj = MyObj.query(self.context)
         obj._context = None
         self.assertRaises(exception.OrphanedObjectError,
-                          obj.update_test)
+                          obj._update_test)
         self.assertRemotes()
 
     def test_changed_1(self):
         obj = MyObj.query(self.context)
         obj.foo = 123
         self.assertEqual(obj.obj_what_changed(), set(['foo']))
-        obj.update_test(self.context)
+        obj._update_test(self.context)
         self.assertEqual(obj.obj_what_changed(), set(['foo', 'bar']))
         self.assertEqual(obj.foo, 123)
         self.assertRemotes()
@@ -532,7 +556,7 @@ class _TestObject(object):
     def test_updates(self):
         obj = MyObj.query(self.context)
         self.assertEqual(obj.foo, 1)
-        obj.update_test()
+        obj._update_test()
         self.assertEqual(obj.bar, 'updated')
         self.assertRemotes()
 
@@ -559,10 +583,10 @@ class _TestObject(object):
 
     def test_contains(self):
         obj = MyObj()
-        self.assertFalse('foo' in obj)
+        self.assertNotIn('foo', obj)
         obj.foo = 1
         self.assertTrue('foo' in obj)
-        self.assertFalse('does_not_exist' in obj)
+        self.assertNotIn('does_not_exist', obj)
 
     def test_obj_attr_is_set(self):
         obj = MyObj()
@@ -613,7 +637,7 @@ class _TestObject(object):
 
     def test_obj_fields(self):
         class TestObj(base.NovaObject):
-            fields = {'foo': int}
+            fields = {'foo': fields.Field(fields.Integer())}
             obj_extra_fields = ['bar']
 
             @property
@@ -623,6 +647,12 @@ class _TestObject(object):
         obj = TestObj()
         self.assertEqual(['foo', 'bar'], obj.obj_fields)
 
+    def test_obj_constructor(self):
+        obj = MyObj(context=self.context, foo=123, bar='abc')
+        self.assertEqual(123, obj.foo)
+        self.assertEqual('abc', obj.bar)
+        self.assertEqual(set(['foo', 'bar']), obj.obj_what_changed())
+
 
 class TestObject(_LocalTest, _TestObject):
     pass
@@ -630,17 +660,17 @@ class TestObject(_LocalTest, _TestObject):
 
 class TestRemoteObject(_RemoteTest, _TestObject):
     def test_major_version_mismatch(self):
-        MyObj2.version = '2.0'
+        MyObj2.VERSION = '2.0'
         self.assertRaises(exception.IncompatibleObjectVersion,
                           MyObj2.query, self.context)
 
     def test_minor_version_greater(self):
-        MyObj2.version = '1.6'
+        MyObj2.VERSION = '1.6'
         self.assertRaises(exception.IncompatibleObjectVersion,
                           MyObj2.query, self.context)
 
     def test_minor_version_less(self):
-        MyObj2.version = '1.2'
+        MyObj2.VERSION = '1.2'
         obj = MyObj2.query(self.context)
         self.assertEqual(obj.bar, 'bar')
         self.assertRemotes()
@@ -648,27 +678,35 @@ class TestRemoteObject(_RemoteTest, _TestObject):
 
 class TestObjectListBase(test.TestCase):
     def test_list_like_operations(self):
+        class MyElement(base.NovaObject):
+            fields = {'foo': fields.IntegerField()}
+
+            def __init__(self, foo):
+                super(MyElement, self).__init__()
+                self.foo = foo
+
         class Foo(base.ObjectListBase, base.NovaObject):
-            pass
+            fields = {'objects': fields.Field(fields.List(
+                        fields.Field(fields.Object(MyElement))))}
 
         objlist = Foo()
         objlist._context = 'foo'
-        objlist.objects = [1, 2, 3]
+        objlist.objects = [MyElement(1), MyElement(2), MyElement(3)]
         self.assertEqual(list(objlist), objlist.objects)
         self.assertEqual(len(objlist), 3)
-        self.assertIn(2, objlist)
-        self.assertEqual(list(objlist[:1]), [1])
+        self.assertIn(objlist.objects[0], objlist)
+        self.assertEqual(list(objlist[:1]), [objlist.objects[0]])
         self.assertEqual(objlist[:1]._context, 'foo')
-        self.assertEqual(objlist[2], 3)
-        self.assertEqual(objlist.count(1), 1)
-        self.assertEqual(objlist.index(2), 1)
+        self.assertEqual(objlist[2], objlist.objects[2])
+        self.assertEqual(objlist.count(objlist.objects[0]), 1)
+        self.assertEqual(objlist.index(objlist.objects[1]), 1)
 
     def test_serialization(self):
         class Foo(base.ObjectListBase, base.NovaObject):
             pass
 
         class Bar(base.NovaObject):
-            fields = {'foo': str}
+            fields = {'foo': fields.Field(fields.String())}
 
         obj = Foo()
         obj.objects = []
@@ -700,7 +738,7 @@ class TestObjectSerializer(_BaseTestCase):
         primitive = ser.serialize_entity(self.context, obj)
         self.assertTrue('nova_object.name' in primitive)
         obj2 = ser.deserialize_entity(self.context, primitive)
-        self.assertTrue(isinstance(obj2, MyObj))
+        self.assertIsInstance(obj2, MyObj)
         self.assertEqual(self.context, obj2._context)
 
     def test_object_serialization_iterables(self):
@@ -711,8 +749,8 @@ class TestObjectSerializer(_BaseTestCase):
             primitive = ser.serialize_entity(self.context, thing)
             self.assertEqual(1, len(primitive))
             for item in primitive:
-                self.assertFalse(isinstance(item, base.NovaObject))
+                self.assertNotIsInstance(item, base.NovaObject)
             thing2 = ser.deserialize_entity(self.context, primitive)
             self.assertEqual(1, len(thing2))
             for item in thing2:
-                self.assertTrue(isinstance(item, MyObj))
+                self.assertIsInstance(item, MyObj)

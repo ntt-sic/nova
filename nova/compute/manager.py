@@ -1,4 +1,4 @@
-# vim: tabstop=6 shiftwidth=4 softtabstop=4
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
 
 # Copyright 2010 United States Government as represented by the
 # Administrator of the National Aeronautics and Space Administration.
@@ -61,6 +61,7 @@ from nova import network
 from nova.network import model as network_model
 from nova.network.security_group import openstack_driver
 from nova import notifier
+from nova.objects import aggregate as aggregate_obj
 from nova.objects import base as obj_base
 from nova.objects import instance as instance_obj
 from nova.objects import migration as migration_obj
@@ -178,7 +179,7 @@ timeout_opts = [
 
 running_deleted_opts = [
     cfg.StrOpt("running_deleted_instance_action",
-               default="log",
+               default="reap",
                help="Action to take if a running deleted instance is detected."
                     "Valid options are 'noop', 'log' and 'reap'. "
                     "Set to 'noop' to disable."),
@@ -355,6 +356,22 @@ def object_compat(function):
     return decorated_function
 
 
+# TODO(danms): Remove me after Icehouse
+def aggregate_object_compat(function):
+    """Wraps a method that expects a new-world aggregate."""
+
+    @functools.wraps(function)
+    def decorated_function(self, context, *args, **kwargs):
+        aggregate = kwargs.get('aggregate')
+        if isinstance(aggregate, dict):
+            aggregate = aggregate_obj.Aggregate._from_db_object(
+                context.elevated(), aggregate_obj.Aggregate(),
+                aggregate)
+            kwargs['aggregate'] = aggregate
+        return function(self, context, *args, **kwargs)
+    return decorated_function
+
+
 def _get_image_meta(context, image_ref):
     image_service, image_id = glance.get_remote_image_service(context,
                                                               image_ref)
@@ -370,19 +387,6 @@ class ComputeVirtAPI(virtapi.VirtAPI):
         return self._compute._instance_update(context,
                                               instance_uuid,
                                               **updates)
-
-    def aggregate_get_by_host(self, context, host, key=None):
-        return self._compute.conductor_api.aggregate_get_by_host(context,
-                                                                 host, key=key)
-
-    def aggregate_metadata_add(self, context, aggregate, metadata,
-                               set_delete=False):
-        return self._compute.conductor_api.aggregate_metadata_add(
-            context, aggregate, metadata, set_delete=set_delete)
-
-    def aggregate_metadata_delete(self, context, aggregate, key):
-        return self._compute.conductor_api.aggregate_metadata_delete(
-            context, aggregate, key)
 
     def security_group_get_by_instance(self, context, instance):
         return self._compute.conductor_api.security_group_get_by_instance(
@@ -419,7 +423,7 @@ class ComputeVirtAPI(virtapi.VirtAPI):
 class ComputeManager(manager.SchedulerDependentManager):
     """Manages the running instances from creation to destruction."""
 
-    RPC_API_VERSION = '2.47'
+    RPC_API_VERSION = '2.48'
 
     def __init__(self, compute_driver=None, *args, **kwargs):
         """Load configuration options and connect to the hypervisor."""
@@ -849,7 +853,7 @@ class ComputeManager(manager.SchedulerDependentManager):
 
         Passes straight through to the virtualization driver.
 
-        Synchronise the call beacuse we may still be in the middle of
+        Synchronise the call because we may still be in the middle of
         creating the instance.
         """
         @utils.synchronized(instance['uuid'])
@@ -1001,10 +1005,6 @@ class ComputeManager(manager.SchedulerDependentManager):
         bdms = self.conductor_api.block_device_mapping_get_all_by_instance(
             context, instance, legacy=False)
 
-        # Verify that all the BDMs have a device_name set and assign a default
-        # one to the ones missing it with the help of the driver.
-        self._default_block_device_names(context, instance, image_meta, bdms)
-
         # b64 decode the files to inject:
         injected_files_orig = injected_files
         injected_files = self._decode_files(injected_files)
@@ -1024,6 +1024,11 @@ class ComputeManager(manager.SchedulerDependentManager):
                         context, instance['uuid'],
                         vm_state=vm_states.BUILDING,
                         task_state=task_states.BLOCK_DEVICE_MAPPING)
+
+                # Verify that all the BDMs have a device_name set and assign a
+                # default to the ones missing it with the help of the driver.
+                self._default_block_device_names(context, instance, image_meta,
+                                                 bdms)
 
                 block_device_info = self._prep_block_device(
                         context, instance, bdms)
@@ -1224,7 +1229,6 @@ class ComputeManager(manager.SchedulerDependentManager):
                         context, instance, vpn=is_vpn,
                         requested_networks=requested_networks,
                         macs=macs,
-                        conductor_api=self.conductor_api,
                         security_groups=security_groups,
                         dhcp_options=dhcp_options)
                 LOG.debug(_('Instance network_info: |%s|'), nwinfo,
@@ -1296,10 +1300,8 @@ class ComputeManager(manager.SchedulerDependentManager):
         It also ensures that there is a root_device_name and is set to the
         first block device in the boot sequence (boot_index=0).
         """
-        try:
-            root_bdm = (bdm for bdm in block_devices
-                        if bdm['boot_index'] == 0).next()
-        except StopIteration:
+        root_bdm = block_device.get_root_bdm(block_devices)
+        if not root_bdm:
             return
 
         # Get the root_device_name from the root BDM or the instance
@@ -1492,7 +1494,7 @@ class ComputeManager(manager.SchedulerDependentManager):
                                                refresh_conn_info=False):
         """Transform volumes to the driver block_device format."""
 
-        # TODO(ndipanov): This method will allways hit the database
+        # TODO(ndipanov): This method will always hit the database
         #                 even though we could pass it bdms if we have
         #                 them already. this is so that we are sure we
         #                 always get the new-style format for now and
@@ -2489,7 +2491,7 @@ class ComputeManager(manager.SchedulerDependentManager):
         #
         # The idea here is to provide the customer with a rescue environment
         # which they are familiar with. So, if they built their instance off of
-        # a Debian image, their rescue VM wil also be Debian.
+        # a Debian image, their rescue VM will also be Debian.
         if not rescue_image_ref:
             # 2. As a last resort, use instance's current image
             LOG.warn(_('Unable to find a different image to use for rescue VM,'
@@ -2799,8 +2801,8 @@ class ComputeManager(manager.SchedulerDependentManager):
                 migration, instance, True)
 
             # NOTE(mriedem): delete stashed old_vm_state information; we
-            # default to ACTIVE for backwards compability if old_vm_state is
-            # not set
+            # default to ACTIVE for backwards compatibility if old_vm_state
+            # is not set
             old_vm_state = sys_meta.pop('old_vm_state', vm_states.ACTIVE)
 
             instance.system_metadata = sys_meta
@@ -3167,7 +3169,7 @@ class ComputeManager(manager.SchedulerDependentManager):
                 context, instance, "create_ip.start")
 
         self.network_api.add_fixed_ip_to_instance(context, instance,
-                network_id, conductor_api=self.conductor_api)
+                                                  network_id)
 
         inst_obj = instance_obj.Instance._from_db_object(
                 context, instance_obj.Instance(), instance)
@@ -3193,7 +3195,7 @@ class ComputeManager(manager.SchedulerDependentManager):
                 context, instance, "delete_ip.start")
 
         self.network_api.remove_fixed_ip_from_instance(context, instance,
-                address, conductor_api=self.conductor_api)
+                                                       address)
 
         inst_obj = instance_obj.Instance._from_db_object(
                 context, instance_obj.Instance(), instance)
@@ -3866,8 +3868,7 @@ class ComputeManager(manager.SchedulerDependentManager):
                          requested_ip=None):
         """Use hotplug to add an network adapter to an instance."""
         network_info = self.network_api.allocate_port_for_instance(
-            context, instance, port_id, network_id, requested_ip,
-            conductor_api=self.conductor_api)
+            context, instance, port_id, network_id, requested_ip)
         if len(network_info) != 1:
             LOG.error(_('allocate_port_for_instance returned %(ports)s ports')
                       % dict(ports=len(network_info)))
@@ -3896,7 +3897,7 @@ class ComputeManager(manager.SchedulerDependentManager):
                                            "attached") % port_id)
 
         self.network_api.deallocate_port_for_instance(context, instance,
-            port_id, conductor_api=self.conductor_api)
+                                                      port_id)
         self.driver.detach_interface(instance, condemned)
 
     def _get_compute_info(self, context, host):
@@ -3967,7 +3968,8 @@ class ComputeManager(manager.SchedulerDependentManager):
         """
         capi = self.conductor_api
         instance_p = obj_base.obj_to_primitive(instance)
-        bdms = capi.block_device_mapping_get_all_by_instance(ctxt, instance_p)
+        bdms = capi.block_device_mapping_get_all_by_instance(ctxt, instance_p,
+                                                             legacy=False)
 
         is_volume_backed = self.compute_api.is_volume_backed_instance(ctxt,
                                                                       instance,
@@ -4793,7 +4795,7 @@ class ComputeManager(manager.SchedulerDependentManager):
             elif vm_power_state == power_state.NOSTATE:
                 # Occasionally, depending on the status of the hypervisor,
                 # which could be restarting for example, an instance may
-                # not be found.  Therefore just log the condidtion.
+                # not be found.  Therefore just log the condition.
                 LOG.warn(_("Instance is unexpectedly not found. Ignore."),
                          instance=db_instance)
         elif vm_state == vm_states.STOPPED:
@@ -4993,12 +4995,13 @@ class ComputeManager(manager.SchedulerDependentManager):
                 self._quota_rollback(context, reservations)
                 self._set_instance_error_state(context, instance_uuid)
 
+    @aggregate_object_compat
     @wrap_exception()
     def add_aggregate_host(self, context, host, slave_info=None,
                            aggregate=None, aggregate_id=None):
         """Notify hypervisor of change (for hypervisor pools)."""
         if not aggregate:
-            aggregate = self.conductor_api.aggregate_get(context, aggregate_id)
+            aggregate_obj.Aggregate.get_by_id(context, aggregate_id)
 
         try:
             self.driver.add_to_aggregate(context, aggregate, host,
@@ -5013,12 +5016,13 @@ class ComputeManager(manager.SchedulerDependentManager):
                                     self.conductor_api.aggregate_host_delete,
                                     aggregate, host)
 
+    @aggregate_object_compat
     @wrap_exception()
     def remove_aggregate_host(self, context, host, slave_info=None,
                               aggregate=None, aggregate_id=None):
         """Removes a host from a physical hypervisor pool."""
         if not aggregate:
-            aggregate = self.conductor_api.aggregate_get(context, aggregate_id)
+            aggregate_obj.Aggregate.get_by_id(context, aggregate_id)
 
         try:
             self.driver.remove_from_aggregate(context, aggregate, host,

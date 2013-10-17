@@ -46,7 +46,6 @@ these objects be simple dictionaries.
 from oslo.config import cfg
 
 from nova.cells import rpcapi as cells_rpcapi
-from nova import exception
 from nova.openstack.common.db import api as db_api
 from nova.openstack.common.gettextutils import _
 from nova.openstack.common import log as logging
@@ -72,16 +71,6 @@ _BACKEND_MAPPING = {'sqlalchemy': 'nova.db.sqlalchemy.api'}
 
 IMPL = db_api.DBAPI(backend_mapping=_BACKEND_MAPPING)
 LOG = logging.getLogger(__name__)
-
-
-class NoMoreNetworks(exception.NovaException):
-    """No more available networks."""
-    pass
-
-
-class NoMoreTargets(exception.NovaException):
-    """No more available targets."""
-    pass
 
 
 ###################
@@ -188,7 +177,7 @@ def compute_node_get_all(context, no_date_fields=False):
 
     :param context: The security context
     :param no_date_fields: If set to True, excludes 'created_at', 'updated_at',
-                           'deteled_at' and 'deleted' fields from the output,
+                           'deleted_at' and 'deleted' fields from the output,
                            thus significantly reducing its size.
                            Set to False by default
 
@@ -483,7 +472,7 @@ def fixed_ip_disassociate_all_by_timeout(context, host, time):
 def fixed_ip_get(context, id, get_network=False):
     """Get fixed ip by id or raise if it does not exist.
 
-    If get_network is true, also return the assocated network.
+    If get_network is true, also return the associated network.
     """
     return IMPL.fixed_ip_get(context, id, get_network)
 
@@ -1206,9 +1195,11 @@ def security_group_get(context, security_group_id, columns_to_join=None):
                                    columns_to_join)
 
 
-def security_group_get_by_name(context, project_id, group_name):
+def security_group_get_by_name(context, project_id, group_name,
+                               columns_to_join=None):
     """Returns a security group with the specified name from a project."""
-    return IMPL.security_group_get_by_name(context, project_id, group_name)
+    return IMPL.security_group_get_by_name(context, project_id, group_name,
+                                           columns_to_join=None)
 
 
 def security_group_get_by_project(context, project_id):

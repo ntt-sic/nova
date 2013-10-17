@@ -771,10 +771,8 @@ class TestNovaMigrations(BaseMigrationTestCase, CommonTestsMixIn):
     def _check_151(self, engine, data):
         task_log = db_utils.get_table(engine, 'task_log')
         row = task_log.select(task_log.c.id == data['id']).execute().first()
-        self.assertTrue(isinstance(row['period_beginning'],
-            datetime.datetime))
-        self.assertTrue(isinstance(row['period_ending'],
-            datetime.datetime))
+        self.assertIsInstance(row['period_beginning'], datetime.datetime)
+        self.assertIsInstance(row['period_ending'], datetime.datetime)
         self.assertEqual(
             data['period_beginning'], str(row['period_beginning']))
         self.assertEqual(data['period_ending'], str(row['period_ending']))
@@ -957,8 +955,8 @@ class TestNovaMigrations(BaseMigrationTestCase, CommonTestsMixIn):
             # NullType needs a special case.  We end up with NullType on sqlite
             # where bigint is not defined.
             if isinstance(base_column.type, sqlalchemy.types.NullType):
-                self.assertTrue(isinstance(shadow_column.type,
-                                           sqlalchemy.types.NullType))
+                self.assertIsInstance(shadow_column.type,
+                                      sqlalchemy.types.NullType)
             else:
                 # Identical types do not test equal because sqlalchemy does not
                 # override __eq__, but if we stringify them then they do.
@@ -1175,16 +1173,14 @@ class TestNovaMigrations(BaseMigrationTestCase, CommonTestsMixIn):
                 # These should not have their values changed, but should
                 # have corrected created_at stamps
                 self.assertEqual(result['value'], original['value'])
-                self.assertTrue(isinstance(result['created_at'],
-                                           datetime.datetime))
+                self.assertIsInstance(result['created_at'], datetime.datetime)
             elif key.startswith('instance_type'):
                 # Values like instance_type_% should be stamped and values
                 # converted from 'None' to None where appropriate
                 self.assertEqual(result['value'],
                                  None if original['value'] == 'None'
                                  else original['value'])
-                self.assertTrue(isinstance(result['created_at'],
-                                           datetime.datetime))
+                self.assertIsInstance(result['created_at'], datetime.datetime)
             else:
                 # None of the non-instance_type values should have
                 # been touched. Since we didn't set created_at on any
@@ -1343,7 +1339,7 @@ class TestNovaMigrations(BaseMigrationTestCase, CommonTestsMixIn):
         self.assertEqual(rows[0]['instance_uuid'], None)
         self.assertEqual(rows[0]['project_id'], None)
         self.assertEqual(rows[0]['user_id'], None)
-        self.assertFalse('instance_id' in rows[0])
+        self.assertNotIn('instance_id', rows[0])
 
     def _post_downgrade_175(self, engine):
         volume_usage_cache = db_utils.get_table(engine, 'volume_usage_cache')
@@ -1351,9 +1347,9 @@ class TestNovaMigrations(BaseMigrationTestCase, CommonTestsMixIn):
         rows = volume_usage_cache.select().execute().fetchall()
         self.assertEqual(len(rows), 1)
 
-        self.assertFalse('instance_uuid' in rows[0])
-        self.assertFalse('project_id' in rows[0])
-        self.assertFalse('user_id' in rows[0])
+        self.assertNotIn('instance_uuid', rows[0])
+        self.assertNotIn('project_id', rows[0])
+        self.assertNotIn('user_id', rows[0])
         self.assertEqual(rows[0]['instance_id'], None)
 
     def _check_176(self, engine, data):
@@ -1370,7 +1366,7 @@ class TestNovaMigrations(BaseMigrationTestCase, CommonTestsMixIn):
         rows = volume_usage_cache.select().execute().fetchall()
         self.assertEqual(len(rows), 1)
 
-        self.assertFalse('availability_zone' in rows[0])
+        self.assertNotIn('availability_zone', rows[0])
 
     def _pre_upgrade_177(self, engine):
         floating_ips = db_utils.get_table(engine, 'floating_ips')
@@ -1752,7 +1748,7 @@ class TestNovaMigrations(BaseMigrationTestCase, CommonTestsMixIn):
     def _post_downgrade_188(self, engine):
         services = db_utils.get_table(engine, 'services')
         rows = services.select().execute().fetchall()
-        self.assertFalse('disabled_reason' in rows[0])
+        self.assertNotIn('disabled_reason', rows[0])
 
     def _pre_upgrade_189(self, engine):
         cells = db_utils.get_table(engine, 'cells')
@@ -2576,8 +2572,8 @@ class TestNovaMigrations(BaseMigrationTestCase, CommonTestsMixIn):
         quota_usage = quota_usages.select().execute().first()
         reservation = reservations.select().execute().first()
 
-        self.assertFalse('user_id' in quota_usage)
-        self.assertFalse('user_id' in reservation)
+        self.assertNotIn('user_id', quota_usage)
+        self.assertNotIn('user_id', reservation)
         self.assertFalse(table_exist)
         # Check indexes are gone
         if engine.name == 'mysql' or engine.name == 'postgresql':
@@ -2654,7 +2650,7 @@ class TestNovaMigrations(BaseMigrationTestCase, CommonTestsMixIn):
         for table_name in ['instances', 'shadow_instances']:
             table = db_utils.get_table(engine, table_name)
             rows = table.select().execute().fetchall()
-            self.assertFalse('locked_by' in rows[0])
+            self.assertNotIn('locked_by', rows[0])
 
     def _pre_upgrade_206(self, engine):
         instances = db_utils.get_table(engine, 'instances')
@@ -2743,13 +2739,13 @@ class TestNovaMigrations(BaseMigrationTestCase, CommonTestsMixIn):
 
         compute_nodes = db_utils.get_table(engine, 'compute_nodes')
         if engine.name == "postgresql":
-            self.assertTrue(isinstance(compute_nodes.c.host_ip.type,
-                            sqlalchemy.dialects.postgresql.INET))
+            self.assertIsInstance(compute_nodes.c.host_ip.type,
+                                  sqlalchemy.dialects.postgresql.INET)
         else:
-            self.assertTrue(isinstance(compute_nodes.c.host_ip.type,
-                            sqlalchemy.types.String))
-        self.assertTrue(isinstance(compute_nodes.c.supported_instances.type,
-                            sqlalchemy.types.Text))
+            self.assertIsInstance(compute_nodes.c.host_ip.type,
+                                  sqlalchemy.types.String)
+        self.assertIsInstance(compute_nodes.c.supported_instances.type,
+                              sqlalchemy.types.Text)
 
     def _post_downgrade_208(self, engine):
         self.assertColumnNotExists(engine, 'compute_nodes', 'host_ip')
@@ -2821,7 +2817,7 @@ class TestNovaMigrations(BaseMigrationTestCase, CommonTestsMixIn):
         data = self._data_209()
         for i in tables:
             dump_table_name = 'dump_' + i
-            self.assertFalse(dump_table_name in check_tables)
+            self.assertNotIn(dump_table_name, check_tables)
             table = change_tables[i]
             table.insert().values(data[i]).execute()
             self.assertEqual(len(table.select().execute().fetchall()), 2)
@@ -2966,8 +2962,7 @@ class TestNovaMigrations(BaseMigrationTestCase, CommonTestsMixIn):
 
         self.assertColumnExists(engine, 'compute_nodes', 'pci_stats')
         nodes = db_utils.get_table(engine, 'compute_nodes')
-        self.assertTrue(isinstance(nodes.c.pci_stats.type,
-                                   sqlalchemy.types.Text))
+        self.assertIsInstance(nodes.c.pci_stats.type, sqlalchemy.types.Text)
 
     def _post_downgrade_213(self, engine):
         self._213(engine)
@@ -3032,6 +3027,56 @@ class TestNovaMigrations(BaseMigrationTestCase, CommonTestsMixIn):
                     )
                 else:
                     self.assertNotIn((name, columns), index_data)
+
+    def _data_215(self):
+        ret = {"services": [{"host": "compute-host1", "id": 1,
+                             "binary": "nova-compute", "topic": "compute",
+                             "report_count": 1}],
+               "compute_nodes": [{"vcpus": 1, "cpu_info": "info",
+                                  "memory_mb": 1, "local_gb": 1,
+                                  "vcpus_used": 1, "memory_mb_used": 1,
+                                  "local_gb_used": 1, "deleted": 0,
+                                  "hypervisor_type": "fake_type",
+                                  "hypervisor_version": 1,
+                                  "service_id": 1, "id": 1},
+                                 {"vcpus": 1, "cpu_info": "info",
+                                  "memory_mb": 1, "local_gb": 1,
+                                  "vcpus_used": 1, "memory_mb_used": 1,
+                                  "local_gb_used": 1, "deleted": 2,
+                                  "hypervisor_type": "fake_type",
+                                  "hypervisor_version": 1,
+                                  "service_id": 1, "id": 2}],
+               "compute_node_stats": [{"id": 10, "compute_node_id": 1,
+                                       "key": "fake-1",
+                                       "deleted": 0},
+                                      {"id": 20, "compute_node_id": 2,
+                                       "key": "fake-2",
+                                       "deleted": 0}]}
+        return ret
+
+    def _pre_upgrade_215(self, engine):
+        tables = ["services", "compute_nodes", "compute_node_stats"]
+        change_tables = dict((i, db_utils.get_table(engine, i))
+                             for i in tables)
+        data = self._data_215()
+        for i in tables:
+            change_tables[i].delete().execute()
+            for v in data[i]:
+                change_tables[i].insert().values(v).execute()
+
+    def _check_215(self, engine, data):
+        stats = db_utils.get_table(engine, "compute_node_stats")
+
+        def get_(stat_id, deleted):
+            deleted_value = 0 if not deleted else stats.c.id
+            return stats.select().\
+                   where(stats.c.id == stat_id).\
+                   where(stats.c.deleted == deleted_value).\
+                   execute().\
+                   fetchall()
+
+        self.assertEqual(1, len(get_(10, False)))
+        self.assertEqual(1, len(get_(20, True)))
 
     def _data_216(self):
         ret = {'instances': [{'user_id': '1234', 'project_id': '5678',
@@ -3136,6 +3181,26 @@ class TestNovaMigrations(BaseMigrationTestCase, CommonTestsMixIn):
                                     ).fetchall()
             self.assertEqual(1, len(rows))
             self.assertEqual(per_project[resource], rows[0]['in_use'])
+
+    def _check_227(self, engine, data):
+        if engine.name == 'sqlite':
+            return
+
+        table = db_utils.get_table(engine, 'project_user_quotas')
+        quota = table.select(table.c.id == 4).execute().first()
+        self.assertEqual(quota['resource'], 'instances')
+
+        # Insert fake_quotas with the longest resource name.
+        fake_quotas = {'id': 5,
+                       'project_id': 'fake_project',
+                       'user_id': 'fake_user',
+                       'resource': 'injected_file_content_bytes',
+                       'hard_limit': 10}
+        table.insert().execute(fake_quotas)
+
+        # Check we can get the longest resource name.
+        quota = table.select(table.c.id == 5).execute().first()
+        self.assertEqual(quota['resource'], 'injected_file_content_bytes')
 
 
 class TestBaremetalMigrations(BaseMigrationTestCase, CommonTestsMixIn):

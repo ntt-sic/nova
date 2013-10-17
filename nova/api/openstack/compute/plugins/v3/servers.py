@@ -249,10 +249,10 @@ class ActionDeserializer(CommonDeserializer):
         if node.hasAttribute("admin_pass"):
             rebuild["admin_pass"] = node.getAttribute("admin_pass")
 
-        if node.hasAttribute("access_ipv4"):
+        if node.hasAttribute("access_ip_v4"):
             rebuild["access_ip_v4"] = node.getAttribute("access_ip_v4")
 
-        if node.hasAttribute("access_ipv6"):
+        if node.hasAttribute("access_ip_v6"):
             rebuild["access_ip_v6"] = node.getAttribute("access_ip_v6")
 
         if self.controller:
@@ -388,7 +388,7 @@ class ServersController(wsgi.Controller):
         super(ServersController, self).__init__(**kwargs)
         self.compute_api = compute.API()
 
-        # Look for implmentation of extension point of server creation
+        # Look for implementation of extension point of server creation
         self.create_extension_manager = \
           stevedore.enabled.EnabledExtensionManager(
               namespace=self.EXTENSION_CREATE_NAMESPACE,
@@ -399,7 +399,7 @@ class ServersController(wsgi.Controller):
         if not list(self.create_extension_manager):
             LOG.debug(_("Did not find any server create extensions"))
 
-        # Look for implmentation of extension point of server create
+        # Look for implementation of extension point of server create
         # XML deserialization
         self.create_xml_deserialize_manager = \
           stevedore.enabled.EnabledExtensionManager(
@@ -413,7 +413,7 @@ class ServersController(wsgi.Controller):
             LOG.debug(_("Did not find any server create xml deserializer"
                         " extensions"))
 
-        # Look for implmentation of extension point of server rebuild
+        # Look for implementation of extension point of server rebuild
         self.rebuild_extension_manager = \
             stevedore.enabled.EnabledExtensionManager(
                 namespace=self.EXTENSION_REBUILD_NAMESPACE,
@@ -424,7 +424,7 @@ class ServersController(wsgi.Controller):
         if not list(self.rebuild_extension_manager):
             LOG.debug(_("Did not find any server rebuild extensions"))
 
-        # Look for implmentation of extension point of server rebuild
+        # Look for implementation of extension point of server rebuild
         # XML deserialization
         self.rebuild_xml_deserialize_manager = \
             stevedore.enabled.EnabledExtensionManager(
@@ -438,7 +438,7 @@ class ServersController(wsgi.Controller):
             LOG.debug(_("Did not find any server rebuild xml deserializer"
                         " extensions"))
 
-        # Look for implmentation of extension point of server resize
+        # Look for implementation of extension point of server resize
         self.resize_extension_manager = \
             stevedore.enabled.EnabledExtensionManager(
                 namespace=self.EXTENSION_RESIZE_NAMESPACE,
@@ -449,7 +449,7 @@ class ServersController(wsgi.Controller):
         if not list(self.resize_extension_manager):
             LOG.debug(_("Did not find any server resize extensions"))
 
-        # Look for implmentation of extension point of server resize
+        # Look for implementation of extension point of server resize
         # XML deserialization
         self.resize_xml_deserialize_manager = \
             stevedore.enabled.EnabledExtensionManager(
@@ -463,7 +463,7 @@ class ServersController(wsgi.Controller):
             LOG.debug(_("Did not find any server resize xml deserializer"
                         " extensions"))
 
-        # Look for implmentation of extension point of server update
+        # Look for implementation of extension point of server update
         self.update_extension_manager = \
             stevedore.enabled.EnabledExtensionManager(
                 namespace=self.EXTENSION_UPDATE_NAMESPACE,
@@ -833,6 +833,8 @@ class ServersController(wsgi.Controller):
                 exception.SecurityGroupNotFound,
                 exception.InstanceUserDataMalformed) as error:
             raise exc.HTTPBadRequest(explanation=error.format_message())
+        except exception.PortNotFound as error:
+            raise exc.HTTPNotFound(explanation=error.format_message())
         except exception.PortInUse as error:
             raise exc.HTTPConflict(explanation=error.format_message())
 
@@ -1233,7 +1235,8 @@ class ServersController(wsgi.Controller):
 
         instance = self._get_server(context, req, id)
 
-        bdms = self.compute_api.get_instance_bdms(context, instance)
+        bdms = self.compute_api.get_instance_bdms(context, instance,
+                                                  legacy=False)
 
         try:
             if self.compute_api.is_volume_backed_instance(context, instance,
@@ -1245,7 +1248,8 @@ class ServersController(wsgi.Controller):
                     # device is set to 'vda'. It needs to be fixed later,
                     # but tentatively we use it here.
                     image_meta = {'properties': self.compute_api.
-                                    _get_bdm_image_metadata(context, bdms)}
+                                    _get_bdm_image_metadata(context, bdms,
+                                                            legacy_bdm=False)}
                 else:
                     src_image = self.compute_api.\
                         image_service.show(context, img)

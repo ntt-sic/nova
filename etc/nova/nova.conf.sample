@@ -406,7 +406,7 @@
 # Options defined in nova.api.metadata.vendordata_json
 #
 
-# File to load json formated vendor data from (string value)
+# File to load json formatted vendor data from (string value)
 #vendordata_jsonfile_path=<None>
 
 
@@ -505,15 +505,6 @@
 # the maximum body size per each osapi request(bytes) (integer
 # value)
 #osapi_max_request_body_size=114688
-
-
-#
-# Options defined in nova.cells.opts
-#
-
-# The full class name of the compute API class to use
-# (deprecated) (string value)
-#compute_api_class=nova.compute.api.API
 
 
 #
@@ -732,7 +723,7 @@
 # Action to take if a running deleted instance is
 # detected.Valid options are 'noop', 'log' and 'reap'. Set to
 # 'noop' to disable. (string value)
-#running_deleted_instance_action=log
+#running_deleted_instance_action=reap
 
 # Number of seconds to wait between runs of the cleanup task.
 # (integer value)
@@ -2052,7 +2043,7 @@
 #xen_hvmloader_path=/usr/lib/xen/boot/hvmloader
 
 # Specific cachemodes to use for different disk types e.g:
-# ["file=directsync","block=none"] (list value)
+# file=directsync,block=none (list value)
 #disk_cachemodes=
 
 # Which pcpus can be used by vcpus of instance e.g:
@@ -2252,7 +2243,7 @@
 #xenapi_agent_path=usr/sbin/xe-update-networking
 
 # Disables the use of the XenAPI agent in any image regardless
-# of what image properties are present.  (boolean value)
+# of what image properties are present. (boolean value)
 #xenapi_disable_agent=false
 
 # Determines if the xenapi agent should be used when the image
@@ -2754,7 +2745,7 @@
 #reserve_percent=10.0
 
 # Type of cell: api or compute (string value)
-#cell_type=<None>
+#cell_type=compute
 
 # Number of seconds after which a lack of capability and
 # capacity updates signals the child cell is to be treated as
@@ -2970,7 +2961,7 @@
 
 # maximal number of retries for IPMI operations (integer
 # value)
-#ipmi_power_retry=5
+#ipmi_power_retry=10
 
 
 #
@@ -2994,6 +2985,10 @@
 
 # Template file for PXE configuration (string value)
 #pxe_config_template=$pybasedir/nova/virt/baremetal/pxe_config.template
+
+# If True, enable file injection for network info, files and
+# admin password (boolean value)
+#use_file_injection=true
 
 # Timeout for PXE deployments. Default: 0 (unlimited) (integer
 # value)
@@ -3288,12 +3283,6 @@
 
 # Total number of VNC ports (integer value)
 #vnc_port_total=10000
-
-# DEPRECATED. VNC password. The password-based access to VNC
-# consoles will be removed in the next release. The default
-# value will disable password protection on the VNC console.
-# (string value)
-#vnc_password=<None>
 
 # Whether to use linked clone (boolean value)
 #use_linked_clone=true
