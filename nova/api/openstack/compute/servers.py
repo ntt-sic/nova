@@ -32,6 +32,7 @@ from nova import compute
 from nova.compute import flavors
 from nova import exception
 from nova.openstack.common.gettextutils import _
+from nova.openstack.common import idempotent
 from nova.openstack.common import log as logging
 from nova.openstack.common.rpc import common as rpc_common
 from nova.openstack.common import strutils
@@ -740,6 +741,8 @@ class Controller(wsgi.Controller):
             msg = _("Instance could not be found")
             raise exc.HTTPNotFound(explanation=msg)
 
+    @idempotent.idempotent
+    @idempotent.helper(substance="show", resolver="id")
     @wsgi.response(202)
     @wsgi.serializers(xml=FullServerTemplate)
     @wsgi.deserializers(xml=CreateDeserializer)
