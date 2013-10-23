@@ -115,7 +115,6 @@ def idempotent(f):
         mc = memorycache.get_client()
 
         ### get action from specified substance, or detect id
-        import pdb; pdb.set_trace()
         if client_token:
             stored = mc.get(client_token)
 
