@@ -572,9 +572,12 @@ class MkfsTestCase(test.NoDBTestCase):
 
     def test_mkfs(self):
         self.mox.StubOutWithMock(utils, 'execute')
-        utils.execute('mkfs', '-t', 'ext4', '-F', '/my/block/dev')
-        utils.execute('mkfs', '-t', 'msdos', '/my/msdos/block/dev')
-        utils.execute('mkswap', '/my/swap/block/dev')
+        utils.execute('mkfs', '-t', 'ext4', '-F', '/my/block/dev',
+                      run_as_root=False)
+        utils.execute('mkfs', '-t', 'msdos', '/my/msdos/block/dev',
+                      run_as_root=False)
+        utils.execute('mkswap', '/my/swap/block/dev',
+                      run_as_root=False)
         self.mox.ReplayAll()
 
         utils.mkfs('ext4', '/my/block/dev')
@@ -584,10 +587,12 @@ class MkfsTestCase(test.NoDBTestCase):
     def test_mkfs_with_label(self):
         self.mox.StubOutWithMock(utils, 'execute')
         utils.execute('mkfs', '-t', 'ext4', '-F',
-                      '-L', 'ext4-vol', '/my/block/dev')
+                      '-L', 'ext4-vol', '/my/block/dev', run_as_root=False)
         utils.execute('mkfs', '-t', 'msdos',
-                      '-n', 'msdos-vol', '/my/msdos/block/dev')
-        utils.execute('mkswap', '-L', 'swap-vol', '/my/swap/block/dev')
+                      '-n', 'msdos-vol', '/my/msdos/block/dev',
+                      run_as_root=False)
+        utils.execute('mkswap', '-L', 'swap-vol', '/my/swap/block/dev',
+                      run_as_root=False)
         self.mox.ReplayAll()
 
         utils.mkfs('ext4', '/my/block/dev', 'ext4-vol')
@@ -681,10 +686,10 @@ class WrappedCodeTestCase(test.NoDBTestCase):
         func = utils.get_wrapped_function(wrapped)
         func_code = func.func_code
         self.assertEqual(4, len(func_code.co_varnames))
-        self.assertTrue('self' in func_code.co_varnames)
-        self.assertTrue('instance' in func_code.co_varnames)
-        self.assertTrue('red' in func_code.co_varnames)
-        self.assertTrue('blue' in func_code.co_varnames)
+        self.assertIn('self', func_code.co_varnames)
+        self.assertIn('instance', func_code.co_varnames)
+        self.assertIn('red', func_code.co_varnames)
+        self.assertIn('blue', func_code.co_varnames)
 
     def test_double_wrapped(self):
         @self._wrapper
@@ -695,10 +700,10 @@ class WrappedCodeTestCase(test.NoDBTestCase):
         func = utils.get_wrapped_function(wrapped)
         func_code = func.func_code
         self.assertEqual(4, len(func_code.co_varnames))
-        self.assertTrue('self' in func_code.co_varnames)
-        self.assertTrue('instance' in func_code.co_varnames)
-        self.assertTrue('red' in func_code.co_varnames)
-        self.assertTrue('blue' in func_code.co_varnames)
+        self.assertIn('self', func_code.co_varnames)
+        self.assertIn('instance', func_code.co_varnames)
+        self.assertIn('red', func_code.co_varnames)
+        self.assertIn('blue', func_code.co_varnames)
 
     def test_triple_wrapped(self):
         @self._wrapper
@@ -710,10 +715,10 @@ class WrappedCodeTestCase(test.NoDBTestCase):
         func = utils.get_wrapped_function(wrapped)
         func_code = func.func_code
         self.assertEqual(4, len(func_code.co_varnames))
-        self.assertTrue('self' in func_code.co_varnames)
-        self.assertTrue('instance' in func_code.co_varnames)
-        self.assertTrue('red' in func_code.co_varnames)
-        self.assertTrue('blue' in func_code.co_varnames)
+        self.assertIn('self', func_code.co_varnames)
+        self.assertIn('instance', func_code.co_varnames)
+        self.assertIn('red', func_code.co_varnames)
+        self.assertIn('blue', func_code.co_varnames)
 
 
 class StringLengthTestCase(test.NoDBTestCase):
@@ -891,7 +896,7 @@ class GetImageFromSystemMetadataTestCase(test.NoDBTestCase):
             self.assertEqual(image[key], sys_meta.get(sys_key))
 
         # Verify that we inherit the rest of metadata as properties
-        self.assertTrue("properties" in image)
+        self.assertIn("properties", image)
 
         for key, value in image["properties"].iteritems():
             sys_key = "%s%s" % (utils.SM_IMAGE_PROP_PREFIX, key)

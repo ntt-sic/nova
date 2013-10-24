@@ -2785,6 +2785,17 @@ class TestNovaMigrations(BaseMigrationTestCase, CommonTestsMixIn):
             change_tables[i].delete().execute()
             change_tables[i].insert().values(data[i]).execute()
 
+        # NOTE(jhesketh): Add instance with NULL uuid to check the backups
+        #                 still work correctly and avoid violating the foreign
+        #                 key constraint. If there are NULL values in a NOT IN
+        #                 () set the result is always false. Therefore having
+        #                 this instance inserted here causes migration 209 to
+        #                 fail unless the IN set sub-query is modified
+        #                 appropriately. See bug/1240325
+        db_utils.get_table(engine, 'instances').insert(
+            {'uuid': None}
+        ).execute()
+
     def _check_209(self, engine, data):
         if engine.name == 'sqlite':
             return
@@ -3183,12 +3194,7 @@ class TestNovaMigrations(BaseMigrationTestCase, CommonTestsMixIn):
             self.assertEqual(per_project[resource], rows[0]['in_use'])
 
     def _check_227(self, engine, data):
-        if engine.name == 'sqlite':
-            return
-
         table = db_utils.get_table(engine, 'project_user_quotas')
-        quota = table.select(table.c.id == 4).execute().first()
-        self.assertEqual(quota['resource'], 'instances')
 
         # Insert fake_quotas with the longest resource name.
         fake_quotas = {'id': 5,

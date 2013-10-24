@@ -953,7 +953,6 @@ class ServersController(wsgi.Controller):
         except exception.InstanceInvalidState as state_error:
             common.raise_http_conflict_for_instance_invalid_state(state_error,
                     'confirm_resize')
-        return exc.HTTPNoContent()
 
     @wsgi.response(202)
     @wsgi.serializers(xml=FullServerTemplate)
@@ -1363,7 +1362,7 @@ class ServersController(wsgi.Controller):
         LOG.debug(_('start instance'), instance=instance)
         try:
             self.compute_api.start(context, instance)
-        except exception.InstanceNotReady as e:
+        except (exception.InstanceNotReady, exception.InstanceIsLocked) as e:
             raise webob.exc.HTTPConflict(explanation=e.format_message())
         return webob.Response(status_int=202)
 
@@ -1376,7 +1375,7 @@ class ServersController(wsgi.Controller):
         LOG.debug(_('stop instance'), instance=instance)
         try:
             self.compute_api.stop(context, instance)
-        except exception.InstanceNotReady as e:
+        except (exception.InstanceNotReady, exception.InstanceIsLocked) as e:
             raise webob.exc.HTTPConflict(explanation=e.format_message())
         return webob.Response(status_int=202)
 

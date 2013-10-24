@@ -277,6 +277,10 @@ class InvalidVolume(Invalid):
     msg_fmt = _("Invalid volume") + ": %(reason)s"
 
 
+class InvalidVolumeAccessMode(Invalid):
+    msg_fmt = _("Invalid volume access mode") + ": %(access_mode)s"
+
+
 class InvalidMetadata(Invalid):
     msg_fmt = _("Invalid metadata") + ": %(reason)s"
 
@@ -386,6 +390,10 @@ class ServiceUnavailable(Invalid):
 
 class ComputeResourcesUnavailable(ServiceUnavailable):
     msg_fmt = _("Insufficient compute resources.")
+
+
+class HypervisorUnavailable(NovaException):
+    msg_fmt = _("Connection to the hypervisor is broken on host: %(host)s")
 
 
 class ComputeServiceUnavailable(ServiceUnavailable):

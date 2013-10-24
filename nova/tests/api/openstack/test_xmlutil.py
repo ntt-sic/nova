@@ -215,7 +215,7 @@ class TemplateElementTest(test.NoDBTestCase):
         # Verify that the child was added
         self.assertEqual(len(elem), 1)
         self.assertEqual(elem[0], child)
-        self.assertEqual('child' in elem, True)
+        self.assertIn('child', elem)
         self.assertEqual(elem['child'], child)
 
         # Ensure that multiple children of the same name are rejected
@@ -243,7 +243,7 @@ class TemplateElementTest(test.NoDBTestCase):
         self.assertEqual(len(elem), 3)
         for idx in range(len(elem)):
             self.assertEqual(children[idx], elem[idx])
-            self.assertEqual(children[idx].tag in elem, True)
+            self.assertIn(children[idx].tag, elem)
             self.assertEqual(elem[children[idx].tag], children[idx])
 
         # Ensure that multiple children of the same name are rejected
@@ -285,7 +285,7 @@ class TemplateElementTest(test.NoDBTestCase):
         children.insert(1, child)
         for idx in range(len(elem)):
             self.assertEqual(children[idx], elem[idx])
-            self.assertEqual(children[idx].tag in elem, True)
+            self.assertIn(children[idx].tag, elem)
             self.assertEqual(elem[children[idx].tag], children[idx])
 
         # Ensure that multiple children of the same name are rejected
@@ -708,6 +708,22 @@ class TemplateTest(test.NoDBTestCase):
         templ = xmlutil.Template(None)
         self.assertEqual(templ.serialize(None), '')
 
+    def test_serialize_with_colon_tagname_support(self):
+        # Our test object to serialize
+        obj = {'extra_specs': {'foo:bar': '999'}}
+        expected_xml = (("<?xml version='1.0' encoding='UTF-8'?>\n"
+                    '<extra_specs><foo:bar xmlns:foo="foo">999</foo:bar>'
+                    '</extra_specs>'))
+        # Set up our master template
+        root = xmlutil.TemplateElement('extra_specs', selector='extra_specs',
+                                       colon_ns=True)
+        value = xmlutil.SubTemplateElement(root, 'foo:bar', selector='foo:bar',
+                                           colon_ns=True)
+        value.text = xmlutil.Selector()
+        master = xmlutil.MasterTemplate(root, 1)
+        result = master.serialize(obj)
+        self.assertEqual(expected_xml, result)
+
 
 class MasterTemplateBuilder(xmlutil.TemplateBuilder):
     def construct(self):
@@ -799,6 +815,18 @@ class MiscellaneousXMLUtilTests(test.NoDBTestCase):
         tmpl = xmlutil.MasterTemplate(root, 1)
         result = tmpl.serialize(dict(wrapper=dict(a='foo', b='bar')))
         self.assertEqual(result, expected_xml)
+
+    def test_make_flat_dict_with_colon_tagname_support(self):
+        # Our test object to serialize
+        obj = {'extra_specs': {'foo:bar': '999'}}
+        expected_xml = (("<?xml version='1.0' encoding='UTF-8'?>\n"
+                    '<extra_specs><foo:bar xmlns:foo="foo">999</foo:bar>'
+                    '</extra_specs>'))
+        # Set up our master template
+        root = xmlutil.make_flat_dict('extra_specs', colon_ns=True)
+        master = xmlutil.MasterTemplate(root, 1)
+        result = master.serialize(obj)
+        self.assertEqual(expected_xml, result)
 
     def test_safe_parse_xml(self):
 

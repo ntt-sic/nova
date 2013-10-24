@@ -14,8 +14,11 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import fixtures
 import os
 import sys
+
+from posix import stat_result
 
 from nova import exception
 from nova import test
@@ -32,6 +35,19 @@ class VirtDiskTest(test.NoDBTestCase):
         vfsguestfs.guestfs = fakeguestfs
 
     def test_inject_data(self):
+
+        orig_os_stat = os.stat
+
+        def fake_stat(arg):
+            if arg == '/some/file':  # fake success
+                return stat_result((16877, 2, 2049L,
+                                    23, 0, 0,
+                                    4096, 1381787843,
+                                    1381635971, 1381635971))
+            else:
+                return orig_os_stat(arg)
+
+        self.useFixture(fixtures.MonkeyPatch('os.stat', fake_stat))
 
         self.assertTrue(diskapi.inject_data("/some/file", use_cow=True))
 
@@ -50,6 +66,8 @@ class VirtDiskTest(test.NoDBTestCase):
         self.assertFalse(diskapi.inject_data("/some/file", admin_password="p"))
         os.name = os_name
 
+        self.assertFalse(diskapi.inject_data("/some/fail/file"))
+
     def test_inject_data_key(self):
 
         vfs = vfsguestfs.VFSGuestFS("/some/file", "qcow2")
@@ -57,10 +75,10 @@ class VirtDiskTest(test.NoDBTestCase):
 
         diskapi._inject_key_into_fs("mysshkey", vfs)
 
-        self.assertTrue("/root/.ssh" in vfs.handle.files)
+        self.assertIn("/root/.ssh", vfs.handle.files)
         self.assertEquals(vfs.handle.files["/root/.ssh"],
                           {'isdir': True, 'gid': 0, 'uid': 0, 'mode': 0o700})
-        self.assertTrue("/root/.ssh/authorized_keys" in vfs.handle.files)
+        self.assertIn("/root/.ssh/authorized_keys", vfs.handle.files)
         self.assertEquals(vfs.handle.files["/root/.ssh/authorized_keys"],
                           {'isdir': False,
                            'content': "Hello World\n# The following ssh " +
@@ -80,7 +98,7 @@ class VirtDiskTest(test.NoDBTestCase):
         vfs.make_path("etc/rc.d")
         diskapi._inject_key_into_fs("mysshkey", vfs)
 
-        self.assertTrue("/etc/rc.d/rc.local" in vfs.handle.files)
+        self.assertIn("/etc/rc.d/rc.local", vfs.handle.files)
         self.assertEquals(vfs.handle.files["/etc/rc.d/rc.local"],
                           {'isdir': False,
                            'content': "Hello World#!/bin/sh\n# Added by " +
@@ -91,10 +109,10 @@ class VirtDiskTest(test.NoDBTestCase):
                            'uid': 100,
                            'mode': 0o700})
 
-        self.assertTrue("/root/.ssh" in vfs.handle.files)
+        self.assertIn("/root/.ssh", vfs.handle.files)
         self.assertEquals(vfs.handle.files["/root/.ssh"],
                           {'isdir': True, 'gid': 0, 'uid': 0, 'mode': 0o700})
-        self.assertTrue("/root/.ssh/authorized_keys" in vfs.handle.files)
+        self.assertIn("/root/.ssh/authorized_keys", vfs.handle.files)
         self.assertEquals(vfs.handle.files["/root/.ssh/authorized_keys"],
                           {'isdir': False,
                            'content': "Hello World\n# The following ssh " +
@@ -115,7 +133,7 @@ class VirtDiskTest(test.NoDBTestCase):
         vfs.make_path("etc/rc.d")
         diskapi._inject_key_into_fs("mysshkey", vfs)
 
-        self.assertTrue("/etc/rc.d/rc.local" in vfs.handle.files)
+        self.assertIn("/etc/rc.d/rc.local", vfs.handle.files)
         self.assertEquals(vfs.handle.files["/etc/rc.d/rc.local"],
                 {'isdir': False,
                  'content': "#!/bin/sh\necho done\n# Added "
@@ -134,7 +152,7 @@ class VirtDiskTest(test.NoDBTestCase):
 
         diskapi._inject_net_into_fs("mynetconfig", vfs)
 
-        self.assertTrue("/etc/network/interfaces" in vfs.handle.files)
+        self.assertIn("/etc/network/interfaces", vfs.handle.files)
         self.assertEquals(vfs.handle.files["/etc/network/interfaces"],
                           {'content': 'mynetconfig',
                            'gid': 100,
@@ -152,7 +170,7 @@ class VirtDiskTest(test.NoDBTestCase):
                                           {"key": "eek",
                                            "value": "wizz"}], vfs)
 
-        self.assertTrue("/meta.js" in vfs.handle.files)
+        self.assertIn("/meta.js", vfs.handle.files)
         self.assertEquals(vfs.handle.files["/meta.js"],
                           {'content': '{"foo": "bar", ' +
                                       '"eek": "wizz"}',

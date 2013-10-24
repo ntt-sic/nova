@@ -109,6 +109,10 @@ def fake_start_stop_not_ready(self, context, instance):
     raise exception.InstanceNotReady(instance_id=instance["uuid"])
 
 
+def fake_start_stop_locked_server(self, context, instance):
+    raise exception.InstanceIsLocked(instance_uuid=instance['uuid'])
+
+
 def fake_instance_get_by_uuid_not_found(context, uuid, columns_to_join):
     raise exception.InstanceNotFound(instance_id=uuid)
 
@@ -200,7 +204,7 @@ class ServersControllerTest(ControllerTest):
         uuid = 'br-00000000-0000-0000-0000-000000000000'
         requested_networks = [{'uuid': uuid}]
         res = self.controller._get_requested_networks(requested_networks)
-        self.assertTrue((uuid, None) in res)
+        self.assertIn((uuid, None), res)
 
     def test_requested_networks_neutronv2_enabled_with_port(self):
         self.flags(network_api_class='nova.network.neutronv2.api.API')
@@ -659,7 +663,7 @@ class ServersControllerTest(ControllerTest):
                          sort_key=None, sort_dir='desc',
                          limit=None, marker=None, want_objects=False):
             self.assertNotEqual(search_opts, None)
-            self.assertTrue('image' in search_opts)
+            self.assertIn('image', search_opts)
             self.assertEqual(search_opts['image'], '12345')
             db_list = [fakes.stub_instance(100, uuid=server_uuid)]
             return instance_obj._make_instance_list(
@@ -690,7 +694,7 @@ class ServersControllerTest(ControllerTest):
                                       use_admin_context=True)
         res = self.controller.index(req)
 
-        self.assertTrue('servers' in res)
+        self.assertIn('servers', res)
 
     def test_admin_restricted_tenant(self):
         def fake_get_all(context, filters=None, sort_key=None,
@@ -707,7 +711,7 @@ class ServersControllerTest(ControllerTest):
                                       use_admin_context=True)
         res = self.controller.index(req)
 
-        self.assertTrue('servers' in res)
+        self.assertIn('servers', res)
 
     def test_all_tenants_pass_policy(self):
         def fake_get_all(context, filters=None, sort_key=None,
@@ -732,7 +736,7 @@ class ServersControllerTest(ControllerTest):
         req = fakes.HTTPRequestV3.blank('/servers?all_tenants=1')
         res = self.controller.index(req)
 
-        self.assertTrue('servers' in res)
+        self.assertIn('servers', res)
 
     def test_all_tenants_fail_policy(self):
         def fake_get_all(context, filters=None, sort_key=None,
@@ -763,7 +767,7 @@ class ServersControllerTest(ControllerTest):
                          sort_key=None, sort_dir='desc',
                          limit=None, marker=None, want_objects=False):
             self.assertNotEqual(search_opts, None)
-            self.assertTrue('flavor' in search_opts)
+            self.assertIn('flavor', search_opts)
             # flavor is an integer ID
             self.assertEqual(search_opts['flavor'], '12345')
             db_list = [fakes.stub_instance(100, uuid=server_uuid)]
@@ -791,7 +795,7 @@ class ServersControllerTest(ControllerTest):
                          sort_key=None, sort_dir='desc',
                          limit=None, marker=None, want_objects=False):
             self.assertNotEqual(search_opts, None)
-            self.assertTrue('vm_state' in search_opts)
+            self.assertIn('vm_state', search_opts)
             self.assertEqual(search_opts['vm_state'], vm_states.ACTIVE)
             db_list = [fakes.stub_instance(100, uuid=server_uuid)]
             return instance_obj._make_instance_list(
@@ -813,7 +817,7 @@ class ServersControllerTest(ControllerTest):
                          sort_key=None, sort_dir='desc',
                          limit=None, marker=None, want_objects=False):
             self.assertNotEqual(search_opts, None)
-            self.assertTrue('task_state' in search_opts)
+            self.assertIn('task_state', search_opts)
             self.assertEqual(search_opts['task_state'], [task_state])
             db_list = [fakes.stub_instance(100, uuid=server_uuid,
                                                 task_state=task_state)]
@@ -847,7 +851,7 @@ class ServersControllerTest(ControllerTest):
         def fake_get_all(compute_self, context, search_opts=None,
                          sort_key=None, sort_dir='desc',
                          limit=None, marker=None, want_objects=False):
-            self.assertTrue('vm_state' in search_opts)
+            self.assertIn('vm_state', search_opts)
             self.assertEqual(search_opts['vm_state'], 'deleted')
 
             db_list = [fakes.stub_instance(100, uuid=server_uuid)]
@@ -870,7 +874,7 @@ class ServersControllerTest(ControllerTest):
                          sort_key=None, sort_dir='desc',
                          limit=None, marker=None, want_objects=False):
             self.assertNotEqual(search_opts, None)
-            self.assertTrue('name' in search_opts)
+            self.assertIn('name', search_opts)
             self.assertEqual(search_opts['name'], 'whee.*')
             db_list = [fakes.stub_instance(100, uuid=server_uuid)]
             return instance_obj._make_instance_list(
@@ -891,7 +895,7 @@ class ServersControllerTest(ControllerTest):
                          sort_key=None, sort_dir='desc',
                          limit=None, marker=None, want_objects=False):
             self.assertNotEqual(search_opts, None)
-            self.assertTrue('changes-since' in search_opts)
+            self.assertIn('changes-since', search_opts)
             changes_since = datetime.datetime(2011, 1, 24, 17, 8, 1,
                                               tzinfo=iso8601.iso8601.UTC)
             self.assertEqual(search_opts['changes-since'], changes_since)
@@ -926,10 +930,10 @@ class ServersControllerTest(ControllerTest):
                          limit=None, marker=None, want_objects=False):
             self.assertNotEqual(search_opts, None)
             # Allowed by user
-            self.assertTrue('name' in search_opts)
-            self.assertTrue('ip' in search_opts)
+            self.assertIn('name', search_opts)
+            self.assertIn('ip', search_opts)
             # OSAPI converts status to vm_state
-            self.assertTrue('vm_state' in search_opts)
+            self.assertIn('vm_state', search_opts)
             # Allowed only by admins with admin API on
             self.assertNotIn('unknown_option', search_opts)
             db_list = [fakes.stub_instance(100, uuid=server_uuid)]
@@ -957,12 +961,12 @@ class ServersControllerTest(ControllerTest):
                          limit=None, marker=None, want_objects=False):
             self.assertNotEqual(search_opts, None)
             # Allowed by user
-            self.assertTrue('name' in search_opts)
+            self.assertIn('name', search_opts)
             # OSAPI converts status to vm_state
-            self.assertTrue('vm_state' in search_opts)
+            self.assertIn('vm_state', search_opts)
             # Allowed only by admins with admin API on
-            self.assertTrue('ip' in search_opts)
-            self.assertTrue('unknown_option' in search_opts)
+            self.assertIn('ip', search_opts)
+            self.assertIn('unknown_option', search_opts)
             db_list = [fakes.stub_instance(100, uuid=server_uuid)]
             return instance_obj._make_instance_list(
                 context, instance_obj.InstanceList(), db_list, FIELDS)
@@ -986,7 +990,7 @@ class ServersControllerTest(ControllerTest):
                          sort_key=None, sort_dir='desc',
                          limit=None, marker=None, want_objects=False):
             self.assertNotEqual(search_opts, None)
-            self.assertTrue('ip' in search_opts)
+            self.assertIn('ip', search_opts)
             self.assertEqual(search_opts['ip'], '10\..*')
             db_list = [fakes.stub_instance(100, uuid=server_uuid)]
             return instance_obj._make_instance_list(
@@ -1010,7 +1014,7 @@ class ServersControllerTest(ControllerTest):
                          sort_key=None, sort_dir='desc',
                          limit=None, marker=None, want_objects=False):
             self.assertNotEqual(search_opts, None)
-            self.assertTrue('ip6' in search_opts)
+            self.assertIn('ip6', search_opts)
             self.assertEqual(search_opts['ip6'], 'ffff.*')
             db_list = [fakes.stub_instance(100, uuid=server_uuid)]
             return instance_obj._make_instance_list(
@@ -1311,6 +1315,13 @@ class ServersControllerRebuildInstanceTest(ControllerTest):
         self.assertRaises(webob.exc.HTTPConflict,
             self.controller._start_server, req, FAKE_UUID, body)
 
+    def test_start_locked_server(self):
+        self.stubs.Set(compute_api.API, 'start', fake_start_stop_locked_server)
+        req = fakes.HTTPRequestV3.blank('/servers/%s/action' % FAKE_UUID)
+        body = dict(start="")
+        self.assertRaises(webob.exc.HTTPConflict,
+            self.controller._start_server, req, FAKE_UUID, body)
+
     def test_stop(self):
         self.mox.StubOutWithMock(compute_api.API, 'stop')
         compute_api.API.stop(mox.IgnoreArg(), mox.IgnoreArg())
@@ -1322,6 +1333,13 @@ class ServersControllerRebuildInstanceTest(ControllerTest):
 
     def test_stop_not_ready(self):
         self.stubs.Set(compute_api.API, 'stop', fake_start_stop_not_ready)
+        req = fakes.HTTPRequestV3.blank('/servers/%s/action' % FAKE_UUID)
+        body = dict(start="")
+        self.assertRaises(webob.exc.HTTPConflict,
+            self.controller._stop_server, req, FAKE_UUID, body)
+
+    def test_stop_locked_server(self):
+        self.stubs.Set(compute_api.API, 'stop', fake_start_stop_locked_server)
         req = fakes.HTTPRequestV3.blank('/servers/%s/action' % FAKE_UUID)
         body = dict(start="")
         self.assertRaises(webob.exc.HTTPConflict,
@@ -2216,7 +2234,7 @@ class ServersControllerCreateTest(test.TestCase):
         res = self.controller.create(self.req, self.body).obj
 
         server = res['server']
-        self.assertTrue('admin_pass' in self.body['server'])
+        self.assertIn('admin_pass', self.body['server'])
 
     def test_create_instance_admin_pass_empty(self):
         self.body['server']['flavor_ref'] = 3,

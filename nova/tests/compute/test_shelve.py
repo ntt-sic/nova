@@ -79,11 +79,6 @@ class ShelveComputeManagerTestCase(test_compute.BaseTestCase):
         self.compute.shelve_instance(self.context, instance,
                 image_id=image_id)
 
-        self.mox.VerifyAll()
-        self.mox.UnsetStubs()
-
-        self.compute.terminate_instance(self.context, instance=instance)
-
     def test_shelve_volume_backed(self):
         db_instance = jsonutils.to_primitive(self._create_fake_instance())
         self.compute.run_instance(self.context, instance=db_instance)
@@ -126,11 +121,6 @@ class ShelveComputeManagerTestCase(test_compute.BaseTestCase):
 
         self.compute.shelve_offload_instance(self.context, instance)
 
-        self.mox.VerifyAll()
-        self.mox.UnsetStubs()
-
-        self.compute.terminate_instance(self.context, instance=instance)
-
     def test_unshelve(self):
         db_instance = jsonutils.to_primitive(self._create_fake_instance())
         self.compute.run_instance(self.context, instance=db_instance)
@@ -148,11 +138,14 @@ class ShelveComputeManagerTestCase(test_compute.BaseTestCase):
         sys_meta['shelved_at'] = timeutils.strtime(at=cur_time)
         sys_meta['shelved_image_id'] = image['id']
         sys_meta['shelved_host'] = host
+        hypervisor_hostname = 'fake_hypervisor_hostname'
+        fake_compute_info = {'hypervisor_hostname': hypervisor_hostname}
 
         self.mox.StubOutWithMock(self.compute, '_notify_about_instance_usage')
         self.mox.StubOutWithMock(self.compute, '_prep_block_device')
         self.mox.StubOutWithMock(self.compute.driver, 'spawn')
         self.mox.StubOutWithMock(self.compute, '_get_power_state')
+        self.mox.StubOutWithMock(self.compute, '_get_compute_info')
         self.mox.StubOutWithMock(db, 'instance_update_and_get_original')
 
         self.deleted_image_id = None
@@ -165,8 +158,12 @@ class ShelveComputeManagerTestCase(test_compute.BaseTestCase):
 
         self.compute._notify_about_instance_usage(self.context, instance,
                 'unshelve.start')
+        self.compute._get_compute_info(mox.IgnoreArg(),
+                                       mox.IgnoreArg()).AndReturn(
+                                                        fake_compute_info)
         db.instance_update_and_get_original(self.context, instance['uuid'],
-                {'task_state': task_states.SPAWNING},
+                {'task_state': task_states.SPAWNING, 'host': host,
+                 'node': hypervisor_hostname},
                 update_cells=False,
                 columns_to_join=['metadata', 'system_metadata'],
                 ).AndReturn((db_instance, db_instance))
@@ -197,11 +194,7 @@ class ShelveComputeManagerTestCase(test_compute.BaseTestCase):
         self.compute.unshelve_instance(self.context, instance,
                 image=image)
         self.assertEqual(image['id'], self.deleted_image_id)
-
-        self.mox.VerifyAll()
-        self.mox.UnsetStubs()
-
-        self.compute.terminate_instance(self.context, instance=instance)
+        self.assertEqual(instance.host, self.compute.host)
 
     def test_unshelve_volume_backed(self):
         db_instance = jsonutils.to_primitive(self._create_fake_instance())
@@ -219,17 +212,24 @@ class ShelveComputeManagerTestCase(test_compute.BaseTestCase):
         sys_meta['shelved_at'] = timeutils.strtime(at=cur_time)
         sys_meta['shelved_image_id'] = None
         sys_meta['shelved_host'] = host
+        hypervisor_hostname = 'fake_hypervisor_hostname'
+        fake_compute_info = {'hypervisor_hostname': hypervisor_hostname}
 
         self.mox.StubOutWithMock(self.compute, '_notify_about_instance_usage')
         self.mox.StubOutWithMock(self.compute, '_prep_block_device')
         self.mox.StubOutWithMock(self.compute.driver, 'spawn')
         self.mox.StubOutWithMock(self.compute, '_get_power_state')
+        self.mox.StubOutWithMock(self.compute, '_get_compute_info')
         self.mox.StubOutWithMock(db, 'instance_update_and_get_original')
 
         self.compute._notify_about_instance_usage(self.context, instance,
                 'unshelve.start')
+        self.compute._get_compute_info(mox.IgnoreArg(),
+                                       mox.IgnoreArg()).AndReturn(
+                                                        fake_compute_info)
         db.instance_update_and_get_original(self.context, instance['uuid'],
-                {'task_state': task_states.SPAWNING},
+                {'task_state': task_states.SPAWNING, 'host': host,
+                 'node': hypervisor_hostname},
                 update_cells=False,
                 columns_to_join=['metadata', 'system_metadata']
                 ).AndReturn((db_instance, db_instance))
@@ -258,11 +258,6 @@ class ShelveComputeManagerTestCase(test_compute.BaseTestCase):
         self.mox.ReplayAll()
 
         self.compute.unshelve_instance(self.context, instance, image=None)
-
-        self.mox.VerifyAll()
-        self.mox.UnsetStubs()
-
-        self.compute.terminate_instance(self.context, instance=instance)
 
     def test_shelved_poll_none_exist(self):
         instance = jsonutils.to_primitive(self._create_fake_instance())

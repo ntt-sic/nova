@@ -683,6 +683,7 @@ class LibvirtDriver(driver.ComputeDriver):
             notifier.get_notifier('compute').error(
                 nova_context.get_admin_context(),
                 'compute.libvirt.error', payload)
+            raise exception.HypervisorUnavailable(host=CONF.host)
 
     def get_num_instances(self):
         """Efficient override of base instance_exists method."""
@@ -947,7 +948,7 @@ class LibvirtDriver(driver.ComputeDriver):
     def _cleanup_rbd(self, instance):
         pool = CONF.libvirt_images_rbd_pool
         volumes = libvirt_utils.list_rbd_volumes(pool)
-        pattern = instance['name']
+        pattern = instance['uuid']
 
         def belongs_to_instance(disk):
             return disk.startswith(pattern)
@@ -1287,6 +1288,31 @@ class LibvirtDriver(driver.ComputeDriver):
                          instance=instance)
                 raise exception.InterfaceDetachFailed(instance)
 
+    def _create_snapshot_metadata(self, base, instance, img_fmt, snp_name):
+        metadata = {'is_public': False,
+                    'status': 'active',
+                    'name': snp_name,
+                    'properties': {
+                                   'kernel_id': instance['kernel_id'],
+                                   'image_location': 'snapshot',
+                                   'image_state': 'available',
+                                   'owner_id': instance['project_id'],
+                                   'ramdisk_id': instance['ramdisk_id'],
+                                   }
+                    }
+        if instance['os_type']:
+            metadata['properties']['os_type'] = instance['os_type']
+
+        # NOTE(vish): glance forces ami disk format to be ami
+        if base.get('disk_format') == 'ami':
+            metadata['disk_format'] = 'ami'
+        else:
+            metadata['disk_format'] = img_fmt
+
+        metadata['container_format'] = base.get('container_format', 'bare')
+
+        return metadata
+
     def snapshot(self, context, instance, image_href, update_task_state):
         """Create snapshot from a running VM instance.
 
@@ -1307,19 +1333,6 @@ class LibvirtDriver(driver.ComputeDriver):
         snapshot_image_service, snapshot_image_id = _image_service
         snapshot = snapshot_image_service.show(context, snapshot_image_id)
 
-        metadata = {'is_public': False,
-                    'status': 'active',
-                    'name': snapshot['name'],
-                    'properties': {
-                                   'kernel_id': instance['kernel_id'],
-                                   'image_location': 'snapshot',
-                                   'image_state': 'available',
-                                   'owner_id': instance['project_id'],
-                                   'ramdisk_id': instance['ramdisk_id'],
-                                   'os_type': instance['os_type'],
-                                   }
-                    }
-
         disk_path = libvirt_utils.find_disk(virt_dom)
         source_format = libvirt_utils.get_disk_type(disk_path)
 
@@ -1329,13 +1342,10 @@ class LibvirtDriver(driver.ComputeDriver):
         if image_format == 'lvm' or image_format == 'rbd':
             image_format = 'raw'
 
-        # NOTE(vish): glance forces ami disk format to be ami
-        if base.get('disk_format') == 'ami':
-            metadata['disk_format'] = 'ami'
-        else:
-            metadata['disk_format'] = image_format
-
-        metadata['container_format'] = base.get('container_format', 'bare')
+        metadata = self._create_snapshot_metadata(base,
+                                                  instance,
+                                                  image_format,
+                                                  snapshot['name'])
 
         snapshot_name = uuid.uuid4().hex
 
@@ -2251,18 +2261,16 @@ class LibvirtDriver(driver.ComputeDriver):
                       fs_format=None, label=None):
         """Create a blank image of specified size."""
 
-        if not fs_format:
-            fs_format = CONF.default_ephemeral_format
+        libvirt_utils.create_image('raw', target,
+                                    '%d%c' % (local_size, unit))
 
-        if not CONF.libvirt_images_type == "lvm":
-            libvirt_utils.create_image('raw', target,
-                                       '%d%c' % (local_size, unit))
-        if fs_format:
-            utils.mkfs(fs_format, target, label)
+    def _create_ephemeral(self, target, ephemeral_size,
+                          fs_label, os_type, is_block_dev=False):
+        if not is_block_dev:
+            self._create_local(target, ephemeral_size)
 
-    def _create_ephemeral(self, target, ephemeral_size, fs_label, os_type):
-        self._create_local(target, ephemeral_size)
-        disk.mkfs(os_type, fs_label, target)
+        # Run as root only for block devices.
+        disk.mkfs(os_type, fs_label, target, run_as_root=is_block_dev)
 
     @staticmethod
     def _create_swap(target, swap_mb):
@@ -2366,28 +2374,32 @@ class LibvirtDriver(driver.ComputeDriver):
 
         ephemeral_gb = instance['ephemeral_gb']
         if 'disk.local' in disk_mapping:
+            disk_image = image('disk.local')
             fn = functools.partial(self._create_ephemeral,
                                    fs_label='ephemeral0',
-                                   os_type=instance["os_type"])
+                                   os_type=instance["os_type"],
+                                   is_block_dev=disk_image.is_block_dev)
             fname = "ephemeral_%s_%s" % (ephemeral_gb, os_type_with_default)
             size = ephemeral_gb * 1024 * 1024 * 1024
-            image('disk.local').cache(fetch_func=fn,
-                                      filename=fname,
-                                      size=size,
-                                      ephemeral_size=ephemeral_gb)
+            disk_image.cache(fetch_func=fn,
+                             filename=fname,
+                             size=size,
+                             ephemeral_size=ephemeral_gb)
 
         for idx, eph in enumerate(driver.block_device_info_get_ephemerals(
                 block_device_info)):
+            disk_image = image(blockinfo.get_eph_disk(idx))
             fn = functools.partial(self._create_ephemeral,
                                    fs_label='ephemeral%d' % idx,
-                                   os_type=instance["os_type"])
+                                   os_type=instance["os_type"],
+                                   is_block_dev=disk_image.is_block_dev)
             size = eph['size'] * 1024 * 1024 * 1024
             fname = "ephemeral_%s_%s" % (eph['size'], os_type_with_default)
-            image(blockinfo.get_eph_disk(idx)).cache(
-                fetch_func=fn,
-                filename=fname,
-                size=size,
-                ephemeral_size=eph['size'])
+            disk_image.cache(
+                             fetch_func=fn,
+                             filename=fname,
+                             size=size,
+                             ephemeral_size=eph['size'])
 
         if 'disk.swap' in disk_mapping:
             mapping = disk_mapping['disk.swap']
@@ -2432,6 +2444,11 @@ class LibvirtDriver(driver.ComputeDriver):
 
         # File injection only if needed
         elif inject_files and CONF.libvirt_inject_partition != -2:
+
+            if booted_from_volume:
+                LOG.warn(_('File injection into a boot from volume '
+                           'instance is not supported'), instance=instance)
+
             target_partition = None
             if not instance['kernel_id']:
                 target_partition = CONF.libvirt_inject_partition
@@ -4314,13 +4331,13 @@ class LibvirtDriver(driver.ComputeDriver):
             path = path_node.get('file')
             target = target_nodes[cnt].attrib['dev']
 
-            if disk_type != 'file':
-                LOG.debug(_('skipping %s since it looks like volume'), path)
-                continue
-
             if not path:
                 LOG.debug(_('skipping disk for %s as it does not have a path'),
                           instance_name)
+                continue
+
+            if disk_type != 'file':
+                LOG.debug(_('skipping %s since it looks like volume'), path)
                 continue
 
             if target in volume_devices:
