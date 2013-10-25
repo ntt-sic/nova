@@ -169,7 +169,7 @@ class _ComputeAPIUnitTestMixIn(object):
         self.mox.StubOutWithMock(instance, 'save')
         self.mox.StubOutWithMock(self.compute_api,
                 '_record_action_start')
-        if self.is_cells:
+        if self.cell_type == 'api':
             rpcapi = self.compute_api.cells_rpcapi
         else:
             rpcapi = self.compute_api.compute_rpcapi
@@ -197,7 +197,7 @@ class _ComputeAPIUnitTestMixIn(object):
         self.mox.StubOutWithMock(instance, 'save')
         self.mox.StubOutWithMock(self.compute_api,
                 '_record_action_start')
-        if self.is_cells:
+        if self.cell_type == 'api':
             rpcapi = self.compute_api.cells_rpcapi
         else:
             rpcapi = self.compute_api.compute_rpcapi
@@ -227,7 +227,7 @@ class _ComputeAPIUnitTestMixIn(object):
         self.compute_api._record_action_start(self.context,
                 instance, instance_actions.START)
 
-        if self.is_cells:
+        if self.cell_type == 'api':
             rpcapi = self.compute_api.cells_rpcapi
         else:
             rpcapi = self.compute_api.compute_rpcapi
@@ -268,7 +268,7 @@ class _ComputeAPIUnitTestMixIn(object):
         self.compute_api._record_action_start(self.context,
                 instance, instance_actions.STOP)
 
-        if self.is_cells:
+        if self.cell_type == 'api':
             rpcapi = self.compute_api.cells_rpcapi
         else:
             rpcapi = self.compute_api.compute_rpcapi
@@ -329,7 +329,7 @@ class _ComputeAPIUnitTestMixIn(object):
         self.compute_api._record_action_start(self.context, inst,
                                               instance_actions.REBOOT)
 
-        if self.is_cells:
+        if self.cell_type == 'api':
             rpcapi = self.compute_api.cells_rpcapi
         else:
             rpcapi = self.compute_api.compute_rpcapi
@@ -472,7 +472,7 @@ class _ComputeAPIUnitTestMixIn(object):
         self.mox.StubOutWithMock(quota.QUOTAS, 'commit')
         rpcapi = self.compute_api.compute_rpcapi
         self.mox.StubOutWithMock(rpcapi, 'confirm_resize')
-        if self.is_cells:
+        if self.cell_type == 'api':
             rpcapi = self.compute_api.cells_rpcapi
         self.mox.StubOutWithMock(rpcapi, 'terminate_instance')
         self.mox.StubOutWithMock(rpcapi, 'soft_delete_instance')
@@ -501,7 +501,7 @@ class _ComputeAPIUnitTestMixIn(object):
 
         cast = True
         commit_quotas = True
-        if not self.is_cells:
+        if self.cell_type != 'api':
             if inst.vm_state == vm_states.RESIZED:
                 self._test_delete_resized_part(inst)
 
@@ -522,7 +522,7 @@ class _ComputeAPIUnitTestMixIn(object):
                 commit_quotas = False
 
         if cast:
-            if not self.is_cells:
+            if self.cell_type != 'api':
                 self.compute_api._record_action_start(self.context, inst,
                                                       instance_actions.DELETE)
             if commit_quotas:
@@ -537,7 +537,7 @@ class _ComputeAPIUnitTestMixIn(object):
                                           reservations=cast_reservations)
 
         if commit_quotas:
-            # Local delete or when is_cells is True.
+            # Local delete or when we're testing API cell.
             quota.QUOTAS.commit(self.context, reservations,
                                 project_id=inst.project_id,
                                 user_id=inst.user_id)
@@ -586,7 +586,7 @@ class _ComputeAPIUnitTestMixIn(object):
         self.mox.StubOutWithMock(self.compute_api, '_create_reservations')
         self.mox.StubOutWithMock(compute_utils,
                                  'notify_about_instance_usage')
-        if self.is_cells:
+        if self.cell_type == 'api':
             rpcapi = self.compute_api.cells_rpcapi
         else:
             rpcapi = self.compute_api.compute_rpcapi
@@ -600,7 +600,7 @@ class _ComputeAPIUnitTestMixIn(object):
                                               inst.project_id, inst.user_id
                                               ).AndReturn(None)
 
-        if self.is_cells:
+        if self.cell_type == 'api':
             rpcapi.terminate_instance(self.context, inst, [],
                                       reservations=None)
         else:
@@ -644,19 +644,13 @@ class _ComputeAPIUnitTestMixIn(object):
                                  'terminate_connection')
         self.mox.StubOutWithMock(db, 'block_device_mapping_destroy')
 
-        if self.is_cells:
-            rpcapi = self.compute_api.cells_rpcapi
-        else:
-            rpcapi = self.compute_api.compute_rpcapi
-        self.mox.StubOutWithMock(rpcapi, 'terminate_instance')
-
         inst.info_cache.delete()
         compute_utils.notify_about_instance_usage(mox.IgnoreArg(),
                                                   self.context,
                                                    inst,
                                                    'delete.start')
         self.context.elevated().MultipleTimes().AndReturn(self.context)
-        if not self.is_cells:
+        if self.cell_type != 'api':
             self.compute_api.network_api.deallocate_for_instance(
                         self.context, inst)
         db.instance_system_metadata_get(self.context, inst.uuid
@@ -739,7 +733,7 @@ class _ComputeAPIUnitTestMixIn(object):
 
         fake_mig.save().WithSideEffects(_check_mig)
 
-        if self.is_cells:
+        if self.cell_type:
             quota.QUOTAS.commit(self.context, resvs)
             resvs = []
 
@@ -807,7 +801,7 @@ class _ComputeAPIUnitTestMixIn(object):
 
         fake_mig.save().WithSideEffects(_check_mig)
 
-        if self.is_cells:
+        if self.cell_type:
             quota.QUOTAS.commit(self.context, resvs)
             resvs = []
 
@@ -828,7 +822,8 @@ class _ComputeAPIUnitTestMixIn(object):
                      same_host=False, allow_same_host=False,
                      allow_mig_same_host=False,
                      project_id=None,
-                     extra_kwargs=None):
+                     extra_kwargs=None,
+                     same_flavor=False):
         if extra_kwargs is None:
             extra_kwargs = {}
 
@@ -854,70 +849,76 @@ class _ComputeAPIUnitTestMixIn(object):
         if flavor_id_passed:
             new_flavor = dict(id=200, flavorid='new-flavor-id',
                               name='new_flavor', disabled=False)
+            if same_flavor:
+                cur_flavor = flavors.extract_flavor(fake_inst)
+                new_flavor['id'] = cur_flavor['id']
             flavors.get_flavor_by_flavor_id(
                     'new-flavor-id',
                     read_deleted='no').AndReturn(new_flavor)
         else:
             new_flavor = current_flavor
 
-        resvs = ['resvs']
+        if (self.cell_type == 'compute' or
+                not (flavor_id_passed and same_flavor)):
+            resvs = ['resvs']
 
-        self.compute_api._upsize_quota_delta(
-                self.context, new_flavor,
-                current_flavor).AndReturn('deltas')
-        self.compute_api._reserve_quota_delta(self.context, 'deltas',
-                project_id=fake_inst['project_id']).AndReturn(resvs)
+            self.compute_api._upsize_quota_delta(
+                    self.context, new_flavor,
+                    current_flavor).AndReturn('deltas')
+            self.compute_api._reserve_quota_delta(self.context, 'deltas',
+                    project_id=fake_inst['project_id']).AndReturn(resvs)
 
-        def _check_state(expected_task_state=None):
-            self.assertEqual(task_states.RESIZE_PREP, fake_inst.task_state)
-            self.assertEqual(fake_inst.progress, 0)
-            for key, value in extra_kwargs.items():
-                self.assertEqual(value, getattr(fake_inst, key))
+            def _check_state(expected_task_state=None):
+                self.assertEqual(task_states.RESIZE_PREP,
+                                 fake_inst.task_state)
+                self.assertEqual(fake_inst.progress, 0)
+                for key, value in extra_kwargs.items():
+                    self.assertEqual(value, getattr(fake_inst, key))
 
-        fake_inst.save(expected_task_state=None).WithSideEffects(
-                _check_state)
+            fake_inst.save(expected_task_state=None).WithSideEffects(
+                    _check_state)
 
-        if allow_same_host:
-            filter_properties = {'ignore_hosts': []}
-        else:
-            filter_properties = {'ignore_hosts': [fake_inst['host']]}
+            if allow_same_host:
+                filter_properties = {'ignore_hosts': []}
+            else:
+                filter_properties = {'ignore_hosts': [fake_inst['host']]}
 
-        if not flavor_id_passed and not allow_mig_same_host:
-            filter_properties['ignore_hosts'].append(fake_inst['host'])
+            if not flavor_id_passed and not allow_mig_same_host:
+                filter_properties['ignore_hosts'].append(fake_inst['host'])
 
-        if self.is_cells:
-            quota.QUOTAS.commit(self.context, resvs,
-                                project_id=fake_inst['project_id'])
-            resvs = []
-            mig = migration_obj.Migration()
+            if self.cell_type == 'api':
+                quota.QUOTAS.commit(self.context, resvs,
+                                    project_id=fake_inst['project_id'])
+                resvs = []
+                mig = migration_obj.Migration()
 
-            def _get_migration():
-                return mig
+                def _get_migration():
+                    return mig
 
-            def _check_mig(ctxt):
-                self.assertEqual(fake_inst.uuid, mig.instance_uuid)
-                self.assertEqual(current_flavor['id'],
-                                 mig.old_instance_type_id)
-                self.assertEqual(new_flavor['id'],
-                                 mig.new_instance_type_id)
-                self.assertEqual('finished', mig.status)
+                def _check_mig(ctxt):
+                    self.assertEqual(fake_inst.uuid, mig.instance_uuid)
+                    self.assertEqual(current_flavor['id'],
+                                     mig.old_instance_type_id)
+                    self.assertEqual(new_flavor['id'],
+                                     mig.new_instance_type_id)
+                    self.assertEqual('finished', mig.status)
 
-            self.stubs.Set(migration_obj, 'Migration', _get_migration)
-            self.mox.StubOutWithMock(self.context, 'elevated')
-            self.mox.StubOutWithMock(mig, 'create')
+                self.stubs.Set(migration_obj, 'Migration', _get_migration)
+                self.mox.StubOutWithMock(self.context, 'elevated')
+                self.mox.StubOutWithMock(mig, 'create')
 
-            self.context.elevated().AndReturn(self.context)
-            mig.create(self.context).WithSideEffects(_check_mig)
+                self.context.elevated().AndReturn(self.context)
+                mig.create(self.context).WithSideEffects(_check_mig)
 
-        self.compute_api._record_action_start(self.context, fake_inst,
-                                              'resize')
+            self.compute_api._record_action_start(self.context, fake_inst,
+                                                  'resize')
 
-        scheduler_hint = {'filter_properties': filter_properties}
+            scheduler_hint = {'filter_properties': filter_properties}
 
-        self.compute_api.compute_task_api.resize_instance(
-                self.context, fake_inst, extra_kwargs,
-                scheduler_hint=scheduler_hint,
-                flavor=new_flavor, reservations=resvs)
+            self.compute_api.compute_task_api.resize_instance(
+                    self.context, fake_inst, extra_kwargs,
+                    scheduler_hint=scheduler_hint,
+                    flavor=new_flavor, reservations=resvs)
 
         self.mox.ReplayAll()
 
@@ -929,7 +930,7 @@ class _ComputeAPIUnitTestMixIn(object):
             self.compute_api.resize(self.context, fake_inst, **extra_kwargs)
 
     def _test_migrate(self, *args, **kwargs):
-        self._test_resize(*args, flavor_id_passed=True, **kwargs)
+        self._test_resize(*args, flavor_id_passed=False, **kwargs)
 
     def test_resize(self):
         self._test_resize()
@@ -1006,30 +1007,6 @@ class _ComputeAPIUnitTestMixIn(object):
                           self.compute_api.resize, self.context,
                           fake_inst, flavor_id='flavor-id')
 
-    def test_resize_same_flavor_fails(self):
-        self.mox.StubOutWithMock(flavors, 'get_flavor_by_flavor_id')
-        # Should never reach these.
-        self.mox.StubOutWithMock(self.compute_api, '_reserve_quota_delta')
-        self.mox.StubOutWithMock(self.compute_api, 'update')
-        self.mox.StubOutWithMock(quota.QUOTAS, 'commit')
-        self.mox.StubOutWithMock(self.compute_api, '_record_action_start')
-        self.mox.StubOutWithMock(self.compute_api.compute_task_api,
-                                 'resize_instance')
-
-        fake_inst = obj_base.obj_to_primitive(self._create_instance_obj())
-        fake_flavor = flavors.extract_flavor(fake_inst)
-
-        flavors.get_flavor_by_flavor_id(
-                fake_flavor['flavorid'],
-                read_deleted='no').AndReturn(fake_flavor)
-
-        self.mox.ReplayAll()
-
-        # Pass in flavor_id.. same as current flavor.
-        self.assertRaises(exception.CannotResizeToSameFlavor,
-                          self.compute_api.resize, self.context,
-                          fake_inst, flavor_id=fake_flavor['flavorid'])
-
     def test_resize_quota_exceeds_fails(self):
         self.mox.StubOutWithMock(flavors, 'get_flavor_by_flavor_id')
         self.mox.StubOutWithMock(self.compute_api, '_upsize_quota_delta')
@@ -1074,7 +1051,7 @@ class _ComputeAPIUnitTestMixIn(object):
         self.mox.StubOutWithMock(instance, 'save')
         self.mox.StubOutWithMock(self.compute_api,
                 '_record_action_start')
-        if self.is_cells:
+        if self.cell_type == 'api':
             rpcapi = self.compute_api.cells_rpcapi
         else:
             rpcapi = self.compute_api.compute_rpcapi
@@ -1102,7 +1079,7 @@ class _ComputeAPIUnitTestMixIn(object):
         self.mox.StubOutWithMock(instance, 'save')
         self.mox.StubOutWithMock(self.compute_api,
                 '_record_action_start')
-        if self.is_cells:
+        if self.cell_type == 'api':
             rpcapi = self.compute_api.cells_rpcapi
         else:
             rpcapi = self.compute_api.compute_rpcapi
@@ -1510,12 +1487,33 @@ class ComputeAPIUnitTestCase(_ComputeAPIUnitTestMixIn, test.NoDBTestCase):
     def setUp(self):
         super(ComputeAPIUnitTestCase, self).setUp()
         self.compute_api = compute_api.API()
-        self.is_cells = False
+        self.cell_type = None
+
+    def test_resize_same_flavor_fails(self):
+        self.assertRaises(exception.CannotResizeToSameFlavor,
+                          self._test_resize, same_flavor=True)
 
 
-class ComputeCellsAPIUnitTestCase(_ComputeAPIUnitTestMixIn, test.NoDBTestCase):
+class ComputeAPIAPICellUnitTestCase(_ComputeAPIUnitTestMixIn,
+                                    test.NoDBTestCase):
     def setUp(self):
-        super(ComputeCellsAPIUnitTestCase, self).setUp()
+        super(ComputeAPIAPICellUnitTestCase, self).setUp()
         self.flags(cell_type='api', enable=True, group='cells')
         self.compute_api = compute_cells_api.ComputeCellsAPI()
-        self.is_cells = True
+        self.cell_type = 'api'
+
+    def test_resize_same_flavor_fails(self):
+        self.assertRaises(exception.CannotResizeToSameFlavor,
+                          self._test_resize, same_flavor=True)
+
+
+class ComputeAPIComputeCellUnitTestCase(_ComputeAPIUnitTestMixIn,
+                                        test.NoDBTestCase):
+    def setUp(self):
+        super(ComputeAPIComputeCellUnitTestCase, self).setUp()
+        self.flags(cell_type='compute', enable=True, group='cells')
+        self.compute_api = compute_api.API()
+        self.cell_type = 'compute'
+
+    def test_resize_same_flavor_passes(self):
+        self._test_resize(same_flavor=True)
