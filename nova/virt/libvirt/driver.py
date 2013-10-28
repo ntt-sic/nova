@@ -73,6 +73,7 @@ from nova import exception
 from nova.image import glance
 from nova import notifier
 from nova.objects import instance as instance_obj
+from nova.objects import service as service_obj
 from nova.openstack.common import excutils
 from nova.openstack.common import fileutils
 from nova.openstack.common.gettextutils import _
@@ -85,6 +86,7 @@ from nova.openstack.common import xmlutils
 from nova.pci import pci_manager
 from nova.pci import pci_utils
 from nova.pci import pci_whitelist
+from nova import unit
 from nova import utils
 from nova import version
 from nova.virt import configdrive
@@ -233,7 +235,7 @@ DEFAULT_FIREWALL_DRIVER = "%s.%s" % (
     libvirt_firewall.__name__,
     libvirt_firewall.IptablesFirewallDriver.__name__)
 
-MAX_CONSOLE_BYTES = 102400
+MAX_CONSOLE_BYTES = 100 * unit.Ki
 
 
 def patch_tpool_proxy():
@@ -587,12 +589,20 @@ class LibvirtDriver(driver.ComputeDriver):
 
             if not wrapped_conn or not self._test_connection(wrapped_conn):
                 LOG.debug(_('Connecting to libvirt: %s'), self.uri())
-                if not CONF.libvirt_nonblocking:
-                    wrapped_conn = self._connect(self.uri(), self.read_only)
-                else:
-                    wrapped_conn = tpool.proxy_call(
-                        (libvirt.virDomain, libvirt.virConnect),
-                        self._connect, self.uri(), self.read_only)
+                try:
+                    if not CONF.libvirt_nonblocking:
+                        wrapped_conn = self._connect(self.uri(),
+                                                     self.read_only)
+                    else:
+                        wrapped_conn = tpool.proxy_call(
+                            (libvirt.virDomain, libvirt.virConnect),
+                            self._connect, self.uri(), self.read_only)
+                finally:
+                    # Enabling the compute service, in case it was disabled
+                    # since the connection was successful.
+                    is_connected = bool(wrapped_conn)
+                    self.set_host_enabled(CONF.host, is_connected)
+
                 self._wrapped_conn = wrapped_conn
 
             try:
@@ -626,8 +636,13 @@ class LibvirtDriver(driver.ComputeDriver):
     def _close_callback(self, conn, reason, opaque):
         with self._wrapped_conn_lock:
             if conn == self._wrapped_conn:
-                LOG.info(_("Connection to libvirt lost: %s") % reason)
+                _error = _("Connection to libvirt lost: %s") % reason
+                LOG.warn(_error)
                 self._wrapped_conn = None
+
+        # Disable compute service to avoid
+        # new instances of being scheduled on this host.
+        self.set_host_enabled(CONF.host, _error)
 
     @staticmethod
     def _test_connection(conn):
@@ -2360,7 +2375,7 @@ class LibvirtDriver(driver.ComputeDriver):
         # create a base image.
         if not booted_from_volume:
             root_fname = imagecache.get_cache_fname(disk_images, 'image_id')
-            size = instance['root_gb'] * 1024 * 1024 * 1024
+            size = instance['root_gb'] * unit.Gi
 
             if size == 0 or suffix == '.rescue':
                 size = None
@@ -2386,7 +2401,7 @@ class LibvirtDriver(driver.ComputeDriver):
                                    os_type=instance["os_type"],
                                    is_block_dev=disk_image.is_block_dev)
             fname = "ephemeral_%s_%s" % (ephemeral_gb, os_type_with_default)
-            size = ephemeral_gb * 1024 * 1024 * 1024
+            size = ephemeral_gb * unit.Gi
             disk_image.cache(fetch_func=fn,
                              filename=fname,
                              size=size,
@@ -2399,7 +2414,7 @@ class LibvirtDriver(driver.ComputeDriver):
                                    fs_label='ephemeral%d' % idx,
                                    os_type=instance["os_type"],
                                    is_block_dev=disk_image.is_block_dev)
-            size = eph['size'] * 1024 * 1024 * 1024
+            size = eph['size'] * unit.Gi
             fname = "ephemeral_%s_%s" % (eph['size'], os_type_with_default)
             disk_image.cache(
                              fetch_func=fn,
@@ -2420,7 +2435,7 @@ class LibvirtDriver(driver.ComputeDriver):
                 swap_mb = inst_type['swap']
 
             if swap_mb > 0:
-                size = swap_mb * 1024 * 1024
+                size = swap_mb * unit.Mi
                 image('disk.swap').cache(fetch_func=self._create_swap,
                                          filename="swap_%s" % swap_mb,
                                          size=size,
@@ -2588,6 +2603,37 @@ class LibvirtDriver(driver.ComputeDriver):
                       % {'dev': pci_devs, 'dom': dom.ID()})
             raise
 
+    def set_host_enabled(self, host, enabled):
+        """Sets the specified host's ability to accept new instances."""
+
+        status_name = {True: 'Enabled',
+                       False: 'Disabled'}
+
+        if isinstance(enabled, bool):
+            disable_service = not enabled
+            disable_reason = ''
+        else:
+            disable_service = bool(enabled)
+            disable_reason = enabled
+
+        ctx = nova_context.get_admin_context()
+        try:
+            service = service_obj.Service.get_by_compute_host(ctx, CONF.host)
+
+            if service.disabled != disable_service:
+                service.disabled = disable_service
+                service.disabled_reason = disable_reason
+                service.save()
+                LOG.debug(_('Updating compute service status to: %s'),
+                             status_name[disable_service])
+        except exception.ComputeHostNotFound:
+            LOG.warn(_('Cannot update service status on host: %s,'
+                        'since it is not registered.') % CONF.host)
+        except Exception:
+            LOG.warn(_('Cannot update service status on host: %s,'
+                        'due to an unexpected exception.') % CONF.host,
+                     exc_info=True)
+
     def get_host_capabilities(self):
         """Returns an instance of config.LibvirtConfigCaps representing
            the capabilities of the host.
@@ -2596,6 +2642,17 @@ class LibvirtDriver(driver.ComputeDriver):
             xmlstr = self._conn.getCapabilities()
             self._caps = vconfig.LibvirtConfigCaps()
             self._caps.parse_str(xmlstr)
+            if hasattr(libvirt, 'VIR_CONNECT_BASELINE_CPU_EXPAND_FEATURES'):
+                try:
+                    features = self._conn.baselineCPU(
+                        [self._caps.host.cpu.to_xml()],
+                        libvirt.VIR_CONNECT_BASELINE_CPU_EXPAND_FEATURES)
+                    if features:
+                        self._caps.host.cpu = vconfig.LibvirtConfigCPU()
+                        self._caps.host.cpu.parse_str(features)
+                except libvirt.VIR_ERR_NO_SUPPORT:
+                    # Note(yjiang5): ignore if libvirt has no support
+                    pass
         return self._caps
 
     def get_host_uuid(self):
@@ -3420,7 +3477,7 @@ class LibvirtDriver(driver.ComputeDriver):
             info = libvirt_utils.get_fs_info(CONF.instances_path)
 
         for (k, v) in info.iteritems():
-            info[k] = v / (1024 ** 3)
+            info[k] = v / unit.Gi
 
         return info
 
@@ -3894,7 +3951,7 @@ class LibvirtDriver(driver.ComputeDriver):
 
         available = 0
         if available_mb:
-            available = available_mb * (1024 ** 2)
+            available = available_mb * unit.Mi
 
         ret = self.get_instance_disk_info(instance['name'])
         disk_infos = jsonutils.loads(ret)
@@ -3954,7 +4011,7 @@ class LibvirtDriver(driver.ComputeDriver):
             ret = self._conn.compareCPU(cpu.to_xml(), 0)
         except libvirt.libvirtError as e:
             with excutils.save_and_reraise_exception():
-                ret = e.message
+                ret = unicode(e)
                 LOG.error(m, {'ret': ret, 'u': u})
 
         if ret <= 0:
@@ -4544,7 +4601,7 @@ class LibvirtDriver(driver.ComputeDriver):
                 size = instance['ephemeral_gb']
             else:
                 size = 0
-            size *= 1024 * 1024 * 1024
+            size *= unit.Gi
 
             # If we have a non partitioned image that we can extend
             # then ensure we're in 'raw' format so we can extend file system.
@@ -4821,8 +4878,8 @@ class HostState(object):
             disk_over_committed = (self.driver.
                     get_disk_over_committed_size_total())
             # Disk available least size
-            available_least = disk_free_gb * (1024 ** 3) - disk_over_committed
-            return (available_least / (1024 ** 3))
+            available_least = disk_free_gb * unit.Gi - disk_over_committed
+            return (available_least / unit.Gi)
 
         LOG.debug(_("Updating host stats"))
         disk_info_dict = self.driver.get_local_gb_info()

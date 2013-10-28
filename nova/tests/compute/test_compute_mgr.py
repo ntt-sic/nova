@@ -33,6 +33,7 @@ from nova.openstack.common import uuidutils
 from nova import test
 from nova.tests.compute import fake_resource_tracker
 from nova.tests import fake_instance
+from nova.tests.objects import test_instance_info_cache
 from nova import utils
 
 
@@ -146,8 +147,8 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase):
         fake_context = 'fake-context'
         inst = fake_instance.fake_db_instance(
                 vm_state=vm_states.ACTIVE,
-                info_cache={'instance_uuid': 'fake-uuid',
-                            'network_info': None},
+                info_cache=dict(test_instance_info_cache.fake_info_cache,
+                                network_info=None),
                 security_groups=None)
         startup_instances = [inst, inst, inst]
 
@@ -155,7 +156,8 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase):
             self.compute.driver.init_host(host=our_host)
             context.get_admin_context().AndReturn(fake_context)
             db.instance_get_all_by_host(
-                    fake_context, our_host, columns_to_join=['info_cache']
+                    fake_context, our_host, columns_to_join=['info_cache'],
+                    use_slave=False
                     ).AndReturn(startup_instances)
             if defer_iptables_apply:
                 self.compute.driver.filter_defer_apply_on()
@@ -224,7 +226,8 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase):
         self.compute.driver.init_host(host=our_host)
         context.get_admin_context().AndReturn(fake_context)
         db.instance_get_all_by_host(fake_context, our_host,
-                                    columns_to_join=['info_cache']
+                                    columns_to_join=['info_cache'],
+                                    use_slave=False
                                     ).AndReturn([])
         self.compute.init_virt_events()
 
@@ -425,7 +428,7 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase):
     def test_sync_instance_power_state_match(self):
         instance = self._get_sync_instance(power_state.RUNNING,
                                            vm_states.ACTIVE)
-        instance.refresh()
+        instance.refresh(use_slave=False)
         self.mox.ReplayAll()
         self.compute._sync_instance_power_state(self.context, instance,
                                                 power_state.RUNNING)
@@ -433,7 +436,7 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase):
     def test_sync_instance_power_state_running_stopped(self):
         instance = self._get_sync_instance(power_state.RUNNING,
                                            vm_states.ACTIVE)
-        instance.refresh()
+        instance.refresh(use_slave=False)
         instance.save()
         self.mox.ReplayAll()
         self.compute._sync_instance_power_state(self.context, instance,
@@ -443,7 +446,7 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase):
     def _test_sync_to_stop(self, power_state, vm_state, driver_power_state,
                            stop=True, force=False):
         instance = self._get_sync_instance(power_state, vm_state)
-        instance.refresh()
+        instance.refresh(use_slave=False)
         instance.save()
         self.mox.StubOutWithMock(self.compute.compute_api, 'stop')
         self.mox.StubOutWithMock(self.compute.compute_api, 'force_stop')
@@ -725,6 +728,9 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
         self.image = {}
         self.node = 'fake-node'
         self.limits = {}
+        self.block_device_mapping = []
+        self.block_device_info = self.compute._prep_block_device(context,
+                self.instance, self.block_device_mapping)
 
         # override tracker with a version that doesn't need the database:
         fake_rt = fake_resource_tracker.FakeResourceTracker(self.compute.host,
@@ -738,8 +744,8 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
         self.mox.StubOutWithMock(self.compute.conductor_api,
                                  'action_event_finish')
         self.compute._build_and_run_instance(self.context, self.instance,
-                self.image, self.injected_files, self.admin_pass, self.node,
-                self.limits)
+                self.image, self.injected_files, self.admin_pass,
+                self.block_device_mapping, self.node, self.limits)
         self.compute.conductor_api.action_event_start(self.context,
                                                       mox.IgnoreArg())
         self.compute.conductor_api.action_event_finish(self.context,
@@ -749,7 +755,8 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
         self.compute.build_and_run_instance(self.context, self.instance,
                 self.image, request_spec={}, filter_properties=[],
                 injected_files=self.injected_files,
-                admin_password=self.admin_pass, node=self.node,
+                admin_password=self.admin_pass,
+                block_device_mapping=self.block_device_mapping, node=self.node,
                 limits=self.limits)
 
     def test_build_abort_exception(self):
@@ -762,8 +769,9 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
         self.mox.StubOutWithMock(self.compute.conductor_api,
                                  'action_event_finish')
         self.compute._build_and_run_instance(self.context, self.instance,
-                self.image, self.injected_files, self.admin_pass, self.node,
-                self.limits).AndRaise(exception.BuildAbortException(reason='',
+                self.image, self.injected_files, self.admin_pass,
+                self.block_device_mapping, self.node, self.limits).AndRaise(
+                        exception.BuildAbortException(reason='',
                             instance_uuid=self.instance['uuid']))
         self.compute._set_instance_error_state(self.context,
                 self.instance['uuid'])
@@ -776,7 +784,8 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
         self.compute.build_and_run_instance(self.context, self.instance,
                 self.image, request_spec={}, filter_properties=[],
                 injected_files=self.injected_files,
-                admin_password=self.admin_pass, node=self.node,
+                admin_password=self.admin_pass,
+                block_device_mapping=self.block_device_mapping, node=self.node,
                 limits=self.limits)
 
     def test_rescheduled_exception(self):
@@ -789,12 +798,13 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
         self.mox.StubOutWithMock(self.compute.conductor_api,
                                  'action_event_finish')
         self.compute._build_and_run_instance(self.context, self.instance,
-                self.image, self.injected_files, self.admin_pass, self.node,
-                self.limits).AndRaise(exception.RescheduledException(reason='',
+                self.image, self.injected_files, self.admin_pass,
+                self.block_device_mapping, self.node, self.limits).AndRaise(
+                        exception.RescheduledException(reason='',
                             instance_uuid=self.instance['uuid']))
         self.compute.compute_task_api.build_instances(self.context,
                 [self.instance], self.image, [], self.admin_pass,
-                self.injected_files, None, None, None)
+                self.injected_files, None, None, self.block_device_mapping)
         self.compute.conductor_api.action_event_start(self.context,
                                                       mox.IgnoreArg())
         self.compute.conductor_api.action_event_finish(self.context,
@@ -804,7 +814,8 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
         self.compute.build_and_run_instance(self.context, self.instance,
                 self.image, request_spec={}, filter_properties=[],
                 injected_files=self.injected_files,
-                admin_password=self.admin_pass, node=self.node,
+                admin_password=self.admin_pass,
+                block_device_mapping=self.block_device_mapping, node=self.node,
                 limits=self.limits)
 
     def test_instance_not_found(self):
@@ -812,23 +823,26 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
         self.mox.StubOutWithMock(conductor_rpcapi.ConductorAPI,
                                  'instance_update')
         self.compute.driver.spawn(self.context, self.instance, self.image,
-                self.injected_files, self.admin_pass).AndRaise(
+                self.injected_files, self.admin_pass,
+                block_device_info=self.block_device_info).AndRaise(
                         exception.InstanceNotFound(instance_id=1))
         conductor_rpcapi.ConductorAPI.instance_update(
             self.context, self.instance['uuid'], mox.IgnoreArg(), 'conductor')
         self.mox.ReplayAll()
 
-        self.assertRaises(exception.BuildAbortException,
+        self.assertRaises(exception.InstanceNotFound,
                 self.compute._build_and_run_instance, self.context,
                 self.instance, self.image, self.injected_files,
-                self.admin_pass, self.node, self.limits)
+                self.admin_pass, self.block_device_mapping, self.node,
+                self.limits)
 
     def test_reschedule_on_exception(self):
         self.mox.StubOutWithMock(self.compute.driver, 'spawn')
         self.mox.StubOutWithMock(conductor_rpcapi.ConductorAPI,
                                  'instance_update')
         self.compute.driver.spawn(self.context, self.instance, self.image,
-                self.injected_files, self.admin_pass).AndRaise(
+                self.injected_files, self.admin_pass,
+                block_device_info=self.block_device_info).AndRaise(
                         test.TestingException())
         conductor_rpcapi.ConductorAPI.instance_update(
             self.context, self.instance['uuid'], mox.IgnoreArg(), 'conductor')
@@ -837,14 +851,16 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
         self.assertRaises(exception.RescheduledException,
                 self.compute._build_and_run_instance, self.context,
                 self.instance, self.image, self.injected_files,
-                self.admin_pass, self.node, self.limits)
+                self.admin_pass, self.block_device_mapping, self.node,
+                self.limits)
 
     def test_unexpected_task_state(self):
         self.mox.StubOutWithMock(self.compute.driver, 'spawn')
         self.mox.StubOutWithMock(conductor_rpcapi.ConductorAPI,
                                  'instance_update')
         self.compute.driver.spawn(self.context, self.instance, self.image,
-                self.injected_files, self.admin_pass).AndRaise(
+                self.injected_files, self.admin_pass,
+                block_device_info=self.block_device_info).AndRaise(
                         exception.UnexpectedTaskStateError(expected=None,
                             actual='deleting'))
         conductor_rpcapi.ConductorAPI.instance_update(
@@ -854,7 +870,8 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
         self.assertRaises(exception.BuildAbortException,
                 self.compute._build_and_run_instance, self.context,
                 self.instance, self.image, self.injected_files,
-                self.admin_pass, self.node, self.limits)
+                self.admin_pass, self.block_device_mapping, self.node,
+                self.limits)
 
     def test_reschedule_on_resources_unavailable(self):
         class FakeResourceTracker(object):
@@ -872,7 +889,7 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
                 FakeResourceTracker())
         self.compute.compute_task_api.build_instances(self.context,
                 [self.instance], self.image, [], self.admin_pass,
-                self.injected_files, None, None, None)
+                self.injected_files, None, None, self.block_device_mapping)
         self.compute.conductor_api.action_event_start(self.context,
                                                       mox.IgnoreArg())
         self.compute.conductor_api.action_event_finish(self.context,
@@ -882,5 +899,90 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
         self.compute.build_and_run_instance(self.context, self.instance,
                 self.image, request_spec={}, filter_properties=[],
                 injected_files=self.injected_files,
-                admin_password=self.admin_pass, node=self.node,
+                admin_password=self.admin_pass,
+                block_device_mapping=self.block_device_mapping, node=self.node,
                 limits=self.limits)
+
+    def test_build_resources_buildabort_reraise(self):
+        self.mox.StubOutWithMock(self.compute, '_build_resources')
+        self.mox.StubOutWithMock(conductor_rpcapi.ConductorAPI,
+                                 'instance_update')
+        conductor_rpcapi.ConductorAPI.instance_update(
+            self.context, self.instance['uuid'], mox.IgnoreArg(), 'conductor')
+        self.compute._build_resources(self.context, self.instance, self.image,
+                self.block_device_mapping).AndRaise(
+                        exception.BuildAbortException(
+                            instance_uuid=self.instance['uuid'],
+                            reason=''))
+        self.mox.ReplayAll()
+        self.assertRaises(exception.BuildAbortException,
+                self.compute._build_and_run_instance, self.context,
+                self.instance, self.image, self.injected_files,
+                self.admin_pass, self.block_device_mapping, self.node,
+                self.limits)
+
+    def test_build_resources_reraises_on_failed_bdm_prep(self):
+        self.mox.StubOutWithMock(self.compute, '_prep_block_device')
+        self.compute._prep_block_device(self.context, self.instance,
+                self.block_device_mapping).AndRaise(test.TestingException())
+        self.mox.ReplayAll()
+
+        try:
+            with self.compute._build_resources(self.context, self.instance,
+                    self.image, self.block_device_mapping):
+                pass
+        except Exception as e:
+            self.assertTrue(isinstance(e, exception.BuildAbortException))
+
+    def test_build_resources_cleans_up_and_reraises_on_spawn_failure(self):
+        self.mox.StubOutWithMock(self.compute, '_cleanup_build_resources')
+        self.compute._cleanup_build_resources(self.context, self.instance,
+                self.block_device_mapping)
+        self.mox.ReplayAll()
+
+        test_exception = test.TestingException()
+
+        def fake_spawn():
+            raise test_exception
+
+        try:
+            with self.compute._build_resources(self.context, self.instance,
+                    self.image, self.block_device_mapping):
+                fake_spawn()
+        except Exception as e:
+            self.assertEqual(test_exception, e)
+
+    def test_build_resources_aborts_on_cleanup_failure(self):
+        self.mox.StubOutWithMock(self.compute, '_cleanup_build_resources')
+        self.compute._cleanup_build_resources(self.context, self.instance,
+                self.block_device_mapping).AndRaise(test.TestingException())
+        self.mox.ReplayAll()
+
+        def fake_spawn():
+            raise test.TestingException()
+
+        try:
+            with self.compute._build_resources(self.context, self.instance,
+                    self.image, self.block_device_mapping):
+                fake_spawn()
+        except Exception as e:
+            self.assertTrue(isinstance(e, exception.BuildAbortException))
+
+    def test_cleanup_cleans_volumes(self):
+        self.mox.StubOutWithMock(self.compute, '_cleanup_volumes')
+        self.compute._cleanup_volumes(self.context, self.instance['uuid'],
+                self.block_device_mapping)
+        self.mox.ReplayAll()
+
+        self.compute._cleanup_build_resources(self.context, self.instance,
+                self.block_device_mapping)
+
+    def test_cleanup_reraises_volume_cleanup_failure(self):
+        self.mox.StubOutWithMock(self.compute, '_cleanup_volumes')
+        self.compute._cleanup_volumes(self.context, self.instance['uuid'],
+                self.block_device_mapping).AndRaise(test.TestingException())
+        self.mox.ReplayAll()
+
+        self.assertRaises(test.TestingException,
+                self.compute._cleanup_build_resources, self.context,
+                self.instance, self.block_device_mapping)
