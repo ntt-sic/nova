@@ -149,12 +149,12 @@ def idempotent(f):
 
             ### get id from specified resolver, or detect id
             resource = data.keys()[0]
-            identifier = None
             if hasattr(f, 'resolver'):
                 target_identifier = (f.resolver,)
             else:
                 target_identifier = ('id', 'uuid', 'name')
 
+            identifier = None
             for ti in target_identifier:
                 if data[resource].has_key(ti):
                     identifier = ti
@@ -162,6 +162,7 @@ def idempotent(f):
             if not identifier:
                 msg = "There is no identifier to satisfy the request."
                 raise exception.InvalidClientToken(details=msg)
+            LOG.debug('####### RESOLVER %s #####' % identifier)
 
             if isinstance(api_result, dict):
                 value_list.append(api_result[resource][identifier])

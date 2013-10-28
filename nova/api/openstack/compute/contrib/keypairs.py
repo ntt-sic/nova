@@ -27,6 +27,7 @@ from nova.api.openstack import xmlutil
 from nova.compute import api as compute_api
 from nova import exception
 from nova.openstack.common.gettextutils import _
+from nova.openstack.common import idempotent
 
 
 authorize = extensions.extension_authorizer('compute', 'keypairs')
@@ -64,6 +65,7 @@ class KeypairController(object):
             clean[attr] = keypair[attr]
         return clean
 
+    @idempotent.idempotent
     @wsgi.serializers(xml=KeypairTemplate)
     def create(self, req, body):
         """
