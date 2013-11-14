@@ -194,7 +194,7 @@ class ServerActionsControllerTest(test.TestCase):
         body = robj.obj
 
         self.assertEqual(body['server']['image']['id'], '2')
-        self.assertEqual(len(body['server']['admin_pass']),
+        self.assertEqual(len(body['server']['admin_password']),
                          CONF.password_length)
 
         self.assertEqual(robj['location'], self_href)
@@ -246,7 +246,7 @@ class ServerActionsControllerTest(test.TestCase):
         self.assertEqual(info['image_href_in_call'], image_uuid)
 
     def test_rebuild_accepted_minimum_pass_disabled(self):
-        # run with enable_instance_password disabled to verify admin_pass
+        # run with enable_instance_password disabled to verify admin_password
         # is missing from response. See lp bug 921814
         self.flags(enable_instance_password=False)
 
@@ -266,7 +266,7 @@ class ServerActionsControllerTest(test.TestCase):
         body = robj.obj
 
         self.assertEqual(body['server']['image']['id'], '2')
-        self.assertNotIn("admin_pass", body['server'])
+        self.assertNotIn("admin_password", body['server'])
 
         self.assertEqual(robj['location'], self_href)
 
@@ -364,7 +364,7 @@ class ServerActionsControllerTest(test.TestCase):
 
         self.assertNotIn('personality', body['server'])
 
-    def test_rebuild_admin_pass(self):
+    def test_rebuild_admin_password(self):
         return_server = fakes.fake_instance_get(image_ref='2',
                 vm_state=vm_states.ACTIVE, host='fake_host')
         self.stubs.Set(db, 'instance_get_by_uuid', return_server)
@@ -372,7 +372,7 @@ class ServerActionsControllerTest(test.TestCase):
         body = {
             "rebuild": {
                 "image_ref": self._image_href,
-                "admin_pass": "asdf",
+                "admin_password": "asdf",
             },
         }
 
@@ -380,10 +380,10 @@ class ServerActionsControllerTest(test.TestCase):
         body = self.controller._action_rebuild(req, FAKE_UUID, body).obj
 
         self.assertEqual(body['server']['image']['id'], '2')
-        self.assertEqual(body['server']['admin_pass'], 'asdf')
+        self.assertEqual(body['server']['admin_password'], 'asdf')
 
-    def test_rebuild_admin_pass_pass_disabled(self):
-        # run with enable_instance_password disabled to verify admin_pass
+    def test_rebuild_admin_password_pass_disabled(self):
+        # run with enable_instance_password disabled to verify admin_password
         # is missing from response. See lp bug 921814
         self.flags(enable_instance_password=False)
 
@@ -394,7 +394,7 @@ class ServerActionsControllerTest(test.TestCase):
         body = {
             "rebuild": {
                 "image_ref": self._image_href,
-                "admin_pass": "asdf",
+                "admin_password": "asdf",
             },
         }
 
@@ -402,7 +402,7 @@ class ServerActionsControllerTest(test.TestCase):
         body = self.controller._action_rebuild(req, FAKE_UUID, body).obj
 
         self.assertEqual(body['server']['image']['id'], '2')
-        self.assertNotIn('admin_pass', body['server'])
+        self.assertNotIn('admin_password', body['server'])
 
     def test_rebuild_server_not_found(self):
         def server_not_found(self, instance_id,
@@ -790,17 +790,17 @@ class ServerActionsControllerTest(test.TestCase):
         image_id = location.replace(glance.generate_image_url(''), '')
         image = image_service.show(None, image_id)
 
-        self.assertEquals(image['name'], 'snapshot_of_volume_backed')
+        self.assertEqual(image['name'], 'snapshot_of_volume_backed')
         properties = image['properties']
-        self.assertEquals(properties['kernel_id'], _fake_id('b'))
-        self.assertEquals(properties['ramdisk_id'], _fake_id('c'))
-        self.assertEquals(properties['root_device_name'], '/dev/vda')
+        self.assertEqual(properties['kernel_id'], _fake_id('b'))
+        self.assertEqual(properties['ramdisk_id'], _fake_id('c'))
+        self.assertEqual(properties['root_device_name'], '/dev/vda')
         bdms = properties['block_device_mapping']
-        self.assertEquals(len(bdms), 1)
-        self.assertEquals(bdms[0]['device_name'], 'vda')
-        self.assertEquals(bdms[0]['snapshot_id'], snapshot['id'])
+        self.assertEqual(len(bdms), 1)
+        self.assertEqual(bdms[0]['device_name'], 'vda')
+        self.assertEqual(bdms[0]['snapshot_id'], snapshot['id'])
         for k in extra_properties.keys():
-            self.assertEquals(properties[k], extra_properties[k])
+            self.assertEqual(properties[k], extra_properties[k])
 
     def test_create_volume_backed_image_no_metadata(self):
         self._do_test_create_volume_backed_image({})
@@ -862,8 +862,8 @@ class ServerActionsControllerTest(test.TestCase):
         image = image_service.show(None, image_id)
 
         properties = image['properties']
-        self.assertEquals(properties['test_key1'], 'test_value1')
-        self.assertEquals(properties['test_key2'], 'test_value2')
+        self.assertEqual(properties['test_key1'], 'test_value1')
+        self.assertEqual(properties['test_key2'], 'test_value2')
 
     def test_create_image_snapshots_disabled(self):
         """Don't permit a snapshot if the allow_instance_snapshots flag is
@@ -991,7 +991,7 @@ class TestServerActionXMLDeserializer(test.TestCase):
                 "name": "new-server-test",
             },
         }
-        self.assertEquals(request['body'], expected)
+        self.assertEqual(request['body'], expected)
 
     def test_create_image_with_metadata(self):
         serial_request = """
@@ -1008,7 +1008,7 @@ class TestServerActionXMLDeserializer(test.TestCase):
                 "metadata": {"key1": "value1"},
             },
         }
-        self.assertEquals(request['body'], expected)
+        self.assertEqual(request['body'], expected)
 
     def test_reboot(self):
         serial_request = """<?xml version="1.0" encoding="UTF-8"?>
@@ -1021,7 +1021,7 @@ class TestServerActionXMLDeserializer(test.TestCase):
                 "type": "HARD",
             },
         }
-        self.assertEquals(request['body'], expected)
+        self.assertEqual(request['body'], expected)
 
     def test_reboot_no_type(self):
         serial_request = """<?xml version="1.0" encoding="UTF-8"?>
@@ -1041,7 +1041,7 @@ class TestServerActionXMLDeserializer(test.TestCase):
         expected = {
             "resize": {"flavor_ref": "http://localhost/flavors/3"},
         }
-        self.assertEquals(request['body'], expected)
+        self.assertEqual(request['body'], expected)
 
     def test_resize_no_flavor_ref(self):
         serial_request = """<?xml version="1.0" encoding="UTF-8"?>
@@ -1060,7 +1060,7 @@ class TestServerActionXMLDeserializer(test.TestCase):
         expected = {
             "confirm_resize": None,
         }
-        self.assertEquals(request['body'], expected)
+        self.assertEqual(request['body'], expected)
 
     def test_revert_resize(self):
         serial_request = """<?xml version="1.0" encoding="UTF-8"?>
@@ -1070,7 +1070,7 @@ class TestServerActionXMLDeserializer(test.TestCase):
         expected = {
             "revert_resize": None,
         }
-        self.assertEquals(request['body'], expected)
+        self.assertEqual(request['body'], expected)
 
     def test_rebuild(self):
         serial_request = """<?xml version="1.0" encoding="UTF-8"?>

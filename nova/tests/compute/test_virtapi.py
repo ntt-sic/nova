@@ -45,14 +45,6 @@ class VirtAPIBaseTest(test.NoDBTestCase, test.APICoverage):
         self.assertExpected('instance_update', 'fake-uuid',
                             dict(host='foohost'))
 
-    def test_security_group_get_by_instance(self):
-        self.assertExpected('security_group_get_by_instance',
-                            {'uuid': 'fake-id'})
-
-    def test_security_group_rule_get_by_security_group(self):
-        self.assertExpected('security_group_rule_get_by_security_group',
-                            {'id': 'fake-id'})
-
     def test_provider_fw_rule_get_all(self):
         self.assertExpected('provider_fw_rule_get_all')
 
@@ -85,6 +77,10 @@ class FakeVirtAPITest(VirtAPIBaseTest):
             # NOTE(danms): instance_update actually becomes the other variant
             # in FakeVirtAPI
             db_method = 'instance_update_and_get_original'
+        elif method == 'instance_type_get':
+            # TODO(mriedem): Remove this once virtapi renames instance_type_get
+            # to flavor_get.
+            db_method = 'flavor_get'
         else:
             db_method = method
         self.mox.StubOutWithMock(db, db_method)

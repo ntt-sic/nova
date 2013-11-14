@@ -39,6 +39,7 @@ from nova.tests import matchers
 from nova.tests import utils
 from nova.tests.virt.vmwareapi import db_fakes
 from nova.tests.virt.vmwareapi import stubs
+from nova import unit
 from nova import utils as nova_utils
 from nova.virt import driver as v_driver
 from nova.virt import fake
@@ -50,12 +51,6 @@ from nova.virt.vmwareapi import vmops
 from nova.virt.vmwareapi import vmware_images
 from nova.virt.vmwareapi import volume_util
 from nova.virt.vmwareapi import volumeops
-
-
-class fake_vm_ref(object):
-    def __init__(self):
-        self.value = 4
-        self._type = 'VirtualMachine'
 
 
 class VMwareAPIConfTestCase(test.NoDBTestCase):
@@ -300,7 +295,7 @@ class VMwareAPIVMTestCase(test.NoDBTestCase):
 
     def test_spawn_disk_extend(self):
         self.mox.StubOutWithMock(self.conn._vmops, '_extend_virtual_disk')
-        requested_size = 80 * 1024 * 1024
+        requested_size = 80 * unit.Mi
         self.conn._vmops._extend_virtual_disk(mox.IgnoreArg(),
                 requested_size, mox.IgnoreArg(), mox.IgnoreArg())
         self.mox.ReplayAll()
@@ -318,7 +313,7 @@ class VMwareAPIVMTestCase(test.NoDBTestCase):
                 mox.IgnoreArg(), mox.IgnoreArg(),
                 mox.IgnoreArg()).AndReturn(result)
         self.mox.StubOutWithMock(self.conn._vmops, '_extend_virtual_disk')
-        requested_size = 80 * 1024 * 1024
+        requested_size = 80 * unit.Mi
         self.conn._vmops._extend_virtual_disk(mox.IgnoreArg(),
                 requested_size, mox.IgnoreArg(), mox.IgnoreArg())
         self.mox.ReplayAll()
@@ -329,7 +324,7 @@ class VMwareAPIVMTestCase(test.NoDBTestCase):
 
     def test_spawn_disk_invalid_disk_size(self):
         self.mox.StubOutWithMock(vmware_images, 'get_vmdk_size_and_properties')
-        result = [82 * 1024 * 1024 * 1024,
+        result = [82 * unit.Gi,
                   {"vmware_ostype": "otherGuest",
                    "vmware_adaptertype": "lsiLogic",
                    "vmware_disktype": "sparse"}]
@@ -610,14 +605,14 @@ class VMwareAPIVMTestCase(test.NoDBTestCase):
         self._check_vm_info(info, power_state.RUNNING)
         instances = self.conn.list_instances()
         self.assertEqual(len(instances), 1)
-        self.conn.destroy(self.instance, self.network_info)
+        self.conn.destroy(self.context, self.instance, self.network_info)
         instances = self.conn.list_instances()
         self.assertEqual(len(instances), 0)
 
     def test_destroy_non_existent(self):
         self._create_instance_in_the_db()
-        self.assertEqual(self.conn.destroy(self.instance, self.network_info),
-                         None)
+        self.assertIsNone(self.conn.destroy(self.context, self.instance,
+            self.network_info))
 
     def _rescue(self):
         def fake_attach_disk_to_vm(*args, **kwargs):
@@ -649,10 +644,13 @@ class VMwareAPIVMTestCase(test.NoDBTestCase):
         self._check_vm_info(info, power_state.RUNNING)
 
     def test_pause(self):
-        pass
+        # Tests that the VMwareESXDriver does not implement the pause method.
+        self.assertRaises(NotImplementedError, self.conn.pause, instance=None)
 
     def test_unpause(self):
-        pass
+        # Tests that the VMwareESXDriver does not implement the unpause method.
+        self.assertRaises(NotImplementedError, self.conn.unpause,
+                          instance=None)
 
     def test_get_diagnostics(self):
         # Simply tests that the VMwareESXDriver doesn't implement the
@@ -937,7 +935,7 @@ class VMwareAPIVMTestCase(test.NoDBTestCase):
         host = vmwareapi_fake._get_objects('HostSystem').objects[0]
         host._add_iscsi_target(data)
         result = volume_util.find_st(self.conn._session, data)
-        self.assertEquals(('fake-device', 'fake-uuid'), result)
+        self.assertEqual(('fake-device', 'fake-uuid'), result)
 
     def test_detach_iscsi_disk_from_vm(self):
         self._create_vm()
@@ -970,7 +968,7 @@ class VMwareAPIVMTestCase(test.NoDBTestCase):
 
     def test_connection_info_get_after_destroy(self):
         self._create_vm()
-        self.conn.destroy(self.instance, self.network_info)
+        self.conn.destroy(self.context, self.instance, self.network_info)
         connector = self.conn.get_volume_connector(self.instance)
         self.assertEqual(connector['ip'], 'test_url')
         self.assertEqual(connector['host'], 'test_url')
@@ -1099,7 +1097,7 @@ class VMwareAPIVCDriverTestCase(VMwareAPIVMTestCase):
         info = self.conn.get_info({'uuid': uuid1,
                                    'node': self.instance_node})
         self._check_vm_info(info, power_state.RUNNING)
-        self.conn.destroy(self.instance, self.network_info)
+        self.conn.destroy(self.context, self.instance, self.network_info)
         self._create_vm(node=self.node_name2, num_instances=1,
                         uuid=uuid2)
         info = self.conn.get_info({'uuid': uuid2,
@@ -1117,7 +1115,7 @@ class VMwareAPIVCDriverTestCase(VMwareAPIVMTestCase):
     def test_finish_migration_power_on_resize(self):
         self._test_finish_migration(power_on=True,
                                     resize_instance=True)
-        self.assertEquals(True, self.power_on_called)
+        self.assertEqual(True, self.power_on_called)
 
     def test_finish_revert_migration_power_on(self):
         self._test_finish_revert_migration(power_on=True)
@@ -1220,3 +1218,14 @@ class VMwareAPIVCDriverTestCase(VMwareAPIVMTestCase):
     def test_confirm_migration(self):
         self._create_vm()
         self.conn.confirm_migration(self.context, self.instance, None)
+
+    def test_pause(self):
+        # Tests that the VMwareVCDriver does not implement the pause method.
+        self._create_instance_in_the_db()
+        self.assertRaises(NotImplementedError, self.conn.pause, self.instance)
+
+    def test_unpause(self):
+        # Tests that the VMwareVCDriver does not implement the unpause method.
+        self._create_instance_in_the_db()
+        self.assertRaises(NotImplementedError, self.conn.unpause,
+                          self.instance)

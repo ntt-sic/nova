@@ -117,6 +117,9 @@ class ConductorAPI(rpcclient.RpcProxy):
 
     1.59 - Remove instance_info_cache_update()
     1.60 - Remove aggregate_metadata_add() and aggregate_metadata_delete()
+    ...  - Remove security_group_get_by_instance() and
+           security_group_rule_get_by_security_group()
+    1.61 - Return deleted instance from instance_destroy()
     """
 
     BASE_RPC_API_VERSION = '1.0'
@@ -221,18 +224,6 @@ class ConductorAPI(rpcclient.RpcProxy):
         cctxt = self.client.prepare(version=version)
         return cctxt.call(context, 'bw_usage_update', **msg_kwargs)
 
-    def security_group_get_by_instance(self, context, instance):
-        instance_p = jsonutils.to_primitive(instance)
-        cctxt = self.client.prepare(version='1.8')
-        return cctxt.call(context, 'security_group_get_by_instance',
-                          instance=instance_p)
-
-    def security_group_rule_get_by_security_group(self, context, secgroup):
-        secgroup_p = jsonutils.to_primitive(secgroup)
-        cctxt = self.client.prepare(version='1.8')
-        return cctxt.call(context, 'security_group_rule_get_by_security_group',
-                          secgroup=secgroup_p)
-
     def provider_fw_rule_get_all(self, context):
         cctxt = self.client.prepare(version='1.9')
         return cctxt.call(context, 'provider_fw_rule_get_all')
@@ -295,8 +286,8 @@ class ConductorAPI(rpcclient.RpcProxy):
 
     def instance_destroy(self, context, instance):
         instance_p = jsonutils.to_primitive(instance)
-        cctxt = self.client.prepare(version='1.16')
-        cctxt.call(context, 'instance_destroy', instance=instance_p)
+        cctxt = self.client.prepare(version='1.61')
+        return cctxt.call(context, 'instance_destroy', instance=instance_p)
 
     def instance_info_cache_delete(self, context, instance):
         instance_p = jsonutils.to_primitive(instance)

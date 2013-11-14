@@ -60,20 +60,26 @@ from nova.virt.xenapi import volumeops
 LOG = logging.getLogger(__name__)
 
 xenapi_vmops_opts = [
-    cfg.IntOpt('xenapi_running_timeout',
+    cfg.IntOpt('running_timeout',
                default=60,
+               deprecated_name='xenapi_running_timeout',
+               deprecated_group='DEFAULT',
                help='number of seconds to wait for instance '
                     'to go to running state'),
-    cfg.StrOpt('xenapi_vif_driver',
+    cfg.StrOpt('vif_driver',
                default='nova.virt.xenapi.vif.XenAPIBridgeDriver',
+               deprecated_name='xenapi_vif_driver',
+               deprecated_group='DEFAULT',
                help='The XenAPI VIF driver using XenServer Network APIs.'),
-    cfg.StrOpt('xenapi_image_upload_handler',
+    cfg.StrOpt('image_upload_handler',
                 default='nova.virt.xenapi.image.glance.GlanceStore',
-                help='Dom0 plugin driver used to handle image uploads.'),
+               deprecated_name='xenapi_image_upload_handler',
+               deprecated_group='DEFAULT',
+               help='Dom0 plugin driver used to handle image uploads.'),
     ]
 
 CONF = cfg.CONF
-CONF.register_opts(xenapi_vmops_opts)
+CONF.register_opts(xenapi_vmops_opts, 'xenserver')
 CONF.import_opt('host', 'nova.netconf')
 CONF.import_opt('vncserver_proxyclient_address', 'nova.vnc')
 
@@ -158,17 +164,17 @@ class VMOps(object):
             DEFAULT_FIREWALL_DRIVER,
             self._virtapi,
             xenapi_session=self._session)
-        vif_impl = importutils.import_class(CONF.xenapi_vif_driver)
+        vif_impl = importutils.import_class(CONF.xenserver.vif_driver)
         self.vif_driver = vif_impl(xenapi_session=self._session)
         self.default_root_dev = '/dev/sda'
 
         LOG.debug(_("Importing image upload handler: %s"),
-                  CONF.xenapi_image_upload_handler)
+                  CONF.xenserver.image_upload_handler)
         self.image_upload_handler = importutils.import_object(
-                                CONF.xenapi_image_upload_handler)
+                                CONF.xenserver.image_upload_handler)
 
     def agent_enabled(self, instance):
-        if CONF.xenapi_disable_agent:
+        if CONF.xenserver.disable_agent:
             return False
 
         return xapi_agent.should_use_agent(instance)
@@ -381,7 +387,8 @@ class VMOps(object):
         def create_vm_record_step(undo_mgr, disk_image_type,
                                   kernel_file, ramdisk_file):
             vm_ref = self._create_vm_record(context, instance, name_label,
-                    disk_image_type, kernel_file, ramdisk_file)
+                                            disk_image_type, kernel_file,
+                                            ramdisk_file, image_meta)
 
             def undo_create_vm():
                 self._destroy(instance, vm_ref, network_info=network_info)
@@ -518,8 +525,8 @@ class VMOps(object):
         if not vm_utils.is_enough_free_mem(self._session, instance):
             raise exception.InsufficientFreeMemory(uuid=instance['uuid'])
 
-    def _create_vm_record(self, context, instance, name_label,
-                          disk_image_type, kernel_file, ramdisk_file):
+    def _create_vm_record(self, context, instance, name_label, disk_image_type,
+                          kernel_file, ramdisk_file, image_meta):
         """Create the VM record in Xen, making sure that we do not create
         a duplicate name-label.  Also do a rough sanity check on memory
         to try to short-circuit a potential failure later.  (The memory
@@ -532,10 +539,12 @@ class VMOps(object):
             self._virtapi.instance_update(context,
                                           instance['uuid'], {'vm_mode': mode})
 
+        device_id = vm_utils.get_vm_device_id(self._session, image_meta)
         use_pv_kernel = (mode == vm_mode.XEN)
         LOG.debug(_("Using PV kernel: %s") % use_pv_kernel, instance=instance)
         vm_ref = vm_utils.create_vm(self._session, instance, name_label,
-                                    kernel_file, ramdisk_file, use_pv_kernel)
+                                    kernel_file, ramdisk_file,
+                                    use_pv_kernel, device_id)
         return vm_ref
 
     def _attach_disks(self, instance, vm_ref, name_label, vdis,
@@ -614,7 +623,7 @@ class VMOps(object):
     def _wait_for_instance_to_start(self, instance, vm_ref):
         LOG.debug(_('Waiting for instance state to become running'),
                   instance=instance)
-        expiration = time.time() + CONF.xenapi_running_timeout
+        expiration = time.time() + CONF.xenserver.running_timeout
         while time.time() < expiration:
             state = self.get_info(instance, vm_ref)['state']
             if state == power_state.RUNNING:
@@ -639,8 +648,6 @@ class VMOps(object):
 
         # NOTE(johngarbutt) the agent object allows all of
         # the following steps to silently fail
-        agent.update_if_needed(version)
-
         agent.inject_ssh_key()
 
         if injected_files:
@@ -650,6 +657,7 @@ class VMOps(object):
             agent.set_admin_password(admin_password)
 
         agent.resetnetwork()
+        agent.update_if_needed(version)
 
     def _prepare_instance_filter(self, instance, network_info):
         try:
@@ -708,7 +716,7 @@ class VMOps(object):
            get a stable representation of the data on disk.
 
         3. Push-to-data-store: Once coalesced, we call
-           'xenapi_image_upload_handler' to upload the images.
+           'image_upload_handler' to upload the images.
 
         """
         vm_ref = self._get_vm_opaque_ref(instance)
@@ -1849,6 +1857,13 @@ class VMOps(object):
             msg = _('No suitable network for migrate')
             raise exception.MigrationPreCheckError(reason=msg)
 
+        pifkey = pifs.keys()[0]
+        if not (utils.is_valid_ipv4(pifs[pifkey]['IP']) or
+                utils.is_valid_ipv6(pifs[pifkey]['IPv6'])):
+            msg = (_('PIF %s does not contain IP address')
+                   % pifs[pifkey]['uuid'])
+            raise exception.MigrationPreCheckError(reason=msg)
+
         nwref = pifs[pifs.keys()[0]]['network']
         try:
             options = {}
@@ -2020,6 +2035,10 @@ class VMOps(object):
         # applied security groups, however this requires changes to XenServer
         self._prepare_instance_filter(instance, network_info)
         self.firewall_driver.apply_instance_filter(instance, network_info)
+
+        # NOTE(johngarbutt) workaround XenServer bug CA-98606
+        vm_ref = self._get_vm_opaque_ref(instance)
+        vm_utils.strip_base_mirror_from_vdis(self._session, vm_ref)
 
     def get_per_instance_usage(self):
         """Get usage info about each active instance."""

@@ -62,26 +62,38 @@ LOG = logging.getLogger(__name__)
 
 xenapi_vm_utils_opts = [
     cfg.StrOpt('cache_images',
-                default='all',
-                help='Cache glance images locally. `all` will cache all'
-                     ' images, `some` will only cache images that have the'
-                     ' image_property `cache_in_nova=True`, and `none` turns'
-                     ' off caching entirely'),
-    cfg.IntOpt('xenapi_image_compression_level',
+               default='all',
+               deprecated_name='cache_images',
+               deprecated_group='DEFAULT',
+               help='Cache glance images locally. `all` will cache all'
+                    ' images, `some` will only cache images that have the'
+                    ' image_property `cache_in_nova=True`, and `none` turns'
+                    ' off caching entirely'),
+    cfg.IntOpt('image_compression_level',
+               deprecated_name='xenapi_image_compression_level',
+               deprecated_group='DEFAULT',
                help='Compression level for images, e.g., 9 for gzip -9.'
                     ' Range is 1-9, 9 being most compressed but most CPU'
                     ' intensive on dom0.'),
     cfg.StrOpt('default_os_type',
                default='linux',
+               deprecated_name='default_os_type',
+               deprecated_group='DEFAULT',
                help='Default OS type'),
     cfg.IntOpt('block_device_creation_timeout',
                default=10,
+               deprecated_name='block_device_creation_timeout',
+               deprecated_group='DEFAULT',
                help='Time to wait for a block device to be created'),
     cfg.IntOpt('max_kernel_ramdisk_size',
                default=16 * unit.Mi,
+               deprecated_name='max_kernel_ramdisk_size',
+               deprecated_group='DEFAULT',
                help='Maximum size in bytes of kernel or ramdisk images'),
     cfg.StrOpt('sr_matching_filter',
                default='default-sr:true',
+               deprecated_name='sr_matching_filter',
+               deprecated_group='DEFAULT',
                help='Filter for finding the SR to be used to install guest '
                     'instances on. To use the Local Storage in default '
                     'XenServer/XCP installations set this flag to '
@@ -90,31 +102,43 @@ xenapi_vm_utils_opts = [
                     'other-config:my_favorite_sr=true. On the other hand, to '
                     'fall back on the Default SR, as displayed by XenCenter, '
                     'set this flag to: default-sr:true'),
-    cfg.BoolOpt('xenapi_sparse_copy',
+    cfg.BoolOpt('sparse_copy',
                 default=True,
+                deprecated_name='xenapi_sparse_copy',
+                deprecated_group='DEFAULT',
                 help='Whether to use sparse_copy for copying data on a '
                      'resize down (False will use standard dd). This speeds '
                      'up resizes down considerably since large runs of zeros '
                      'won\'t have to be rsynced'),
-    cfg.IntOpt('xenapi_num_vbd_unplug_retries',
+    cfg.IntOpt('num_vbd_unplug_retries',
                default=10,
+               deprecated_name='xenapi_num_vbd_unplug_retries',
+               deprecated_group='DEFAULT',
                help='Maximum number of retries to unplug VBD'),
-    cfg.StrOpt('xenapi_torrent_images',
+    cfg.StrOpt('torrent_images',
                default='none',
+               deprecated_name='xenapi_torrent_images',
+               deprecated_group='DEFAULT',
                help='Whether or not to download images via Bit Torrent '
                     '(all|some|none).'),
-    cfg.StrOpt('xenapi_ipxe_network_name',
+    cfg.StrOpt('ipxe_network_name',
+               deprecated_name='xenapi_ipxe_network_name',
+               deprecated_group='DEFAULT',
                help='Name of network to use for booting iPXE ISOs'),
-    cfg.StrOpt('xenapi_ipxe_boot_menu_url',
+    cfg.StrOpt('ipxe_boot_menu_url',
+               deprecated_name='xenapi_ipxe_boot_menu_url',
+               deprecated_group='DEFAULT',
                help='URL to the iPXE boot menu'),
-    cfg.StrOpt('xenapi_ipxe_mkisofs_cmd',
+    cfg.StrOpt('ipxe_mkisofs_cmd',
                default='mkisofs',
+               deprecated_name='xenapi_ipxe_mkisofs_cmd',
+               deprecated_group='DEFAULT',
                help='Name and optionally path of the tool used for '
                     'ISO image creation'),
     ]
 
 CONF = cfg.CONF
-CONF.register_opts(xenapi_vm_utils_opts)
+CONF.register_opts(xenapi_vm_utils_opts, 'xenserver')
 CONF.import_opt('default_ephemeral_format', 'nova.virt.driver')
 CONF.import_opt('use_cow_images', 'nova.virt.driver')
 CONF.import_opt('glance_num_retries', 'nova.image.glance')
@@ -192,8 +216,33 @@ class ImageType(object):
         }.get(image_type_id)
 
 
+def get_vm_device_id(session, image_meta):
+    # NOTE: device_id should be 2 for windows VMs which run new xentools
+    # (>=6.1). Refer to http://support.citrix.com/article/CTX135099 for more
+    # information.
+    if image_meta is None:
+        image_meta = {}
+    device_id = image_meta.get('xenapi_device_id')
+
+    # The device_id is required to be set for hypervisor version 6.1 and above
+    if device_id:
+        hypervisor_version = session.product_version
+        if _hypervisor_supports_device_id(hypervisor_version):
+            return device_id
+        else:
+            msg = _("Device id %(id)s specified is not supported by "
+                    "hypervisor version %(version)s") % {'id': device_id,
+                    'version': hypervisor_version}
+            raise exception.NovaException(msg)
+
+
+def _hypervisor_supports_device_id(version):
+    hypervisor_major_minor_version = utils.get_major_minor_version(version)
+    return(hypervisor_major_minor_version >= 6.1)
+
+
 def create_vm(session, instance, name_label, kernel, ramdisk,
-              use_pv_kernel=False):
+              use_pv_kernel=False, device_id=None):
     """Create a VM record.  Returns new VM reference.
     the use_pv_kernel flag indicates whether the guest is HVM or PV
 
@@ -269,6 +318,9 @@ def create_vm(session, instance, name_label, kernel, ramdisk,
         rec['platform']['nx'] = 'true'
         rec['HVM_boot_params'] = {'order': 'dc'}
         rec['HVM_boot_policy'] = 'BIOS order'
+
+    if device_id:
+        rec['platform']['device_id'] = device_id
 
     vm_ref = session.call_xenapi('VM.create', rec)
     LOG.debug(_('Created VM'), instance=instance)
@@ -348,15 +400,25 @@ def find_vbd_by_number(session, vm_ref, number):
             _('VBD not found in instance %s') % vm_ref)
 
 
-def unplug_vbd(session, vbd_ref):
-    """Unplug VBD from VM."""
-    # Call VBD.unplug on the given VBD, with a retry if we get
-    # DEVICE_DETACH_REJECTED.  For reasons which we don't understand,
+def _should_retry_unplug_vbd(err):
+    # Retry if unplug failed with DEVICE_DETACH_REJECTED
+    # For reasons which we don't understand,
     # we're seeing the device still in use, even when all processes
     # using the device should be dead.
-    max_attempts = CONF.xenapi_num_vbd_unplug_retries + 1
+    # Since XenServer 6.2, we also need to retry if we get
+    # INTERNAL_ERROR, as that error goes away when you retry.
+    return (err == 'DEVICE_DETACH_REJECTED'
+            or
+            err == 'INTERNAL_ERROR')
+
+
+def unplug_vbd(session, vbd_ref):
+    max_attempts = CONF.xenserver.num_vbd_unplug_retries + 1
     for num_attempt in xrange(1, max_attempts + 1):
         try:
+            if num_attempt > 1:
+                greenthread.sleep(1)
+
             session.call_xenapi('VBD.unplug', vbd_ref)
             return
         except session.XenAPI.Failure as exc:
@@ -364,17 +426,15 @@ def unplug_vbd(session, vbd_ref):
             if err == 'DEVICE_ALREADY_DETACHED':
                 LOG.info(_('VBD %s already detached'), vbd_ref)
                 return
-            elif err == 'DEVICE_DETACH_REJECTED':
-                LOG.info(_('VBD %(vbd_ref)s detach rejected, attempt'
-                           ' %(num_attempt)d/%(max_attempts)d'),
+            elif _should_retry_unplug_vbd(err):
+                LOG.info(_('VBD %(vbd_ref)s uplug failed with "%(err)s", '
+                           'attempt %(num_attempt)d/%(max_attempts)d'),
                          {'vbd_ref': vbd_ref, 'num_attempt': num_attempt,
-                          'max_attempts': max_attempts})
+                          'max_attempts': max_attempts, 'err': err})
             else:
                 LOG.exception(exc)
                 raise volume_utils.StorageError(
                         _('Unable to unplug VBD %s') % vbd_ref)
-
-        greenthread.sleep(1)
 
     raise volume_utils.StorageError(
             _('Reached maximum number of retries trying to unplug VBD %s')
@@ -677,6 +737,23 @@ def get_all_vdi_uuids_for_vm(session, vm_ref, min_userdevice=0):
             yield _vdi_get_uuid(session, vdi_ref)
 
 
+def _try_strip_base_mirror_from_vdi(session, vdi_ref):
+    try:
+        session.call_xenapi("VDI.remove_from_sm_config", vdi_ref,
+                            "base_mirror")
+    except session.XenAPI.Failure:
+        LOG.debug(_("Error while removing sm_config"), exc_info=True)
+
+
+def strip_base_mirror_from_vdis(session, vm_ref):
+    # NOTE(johngarbutt) part of workaround for XenServer bug CA-98606
+    vbd_refs = session.call_xenapi("VM.get_VBDs", vm_ref)
+    for vbd in vbd_refs:
+        vbd_rec = session.call_xenapi("VBD.get_record", vbd)
+        vdi_ref = vbd_rec['VDI']
+        _try_strip_base_mirror_from_vdi(session, vdi_ref)
+
+
 @contextlib.contextmanager
 def snapshot_attached_here(session, instance, vm_ref, label, userdevice='0',
                            post_snapshot_callback=None):
@@ -744,7 +821,7 @@ def get_sr_path(session, sr_ref=None):
               "  SR %(uuid)s is of type %(type)s") %
             {"uuid": sr_uuid, "type": sr_rec["type"]})
 
-    return os.path.join(CONF.xenapi_sr_base_path, sr_uuid)
+    return os.path.join(CONF.xenserver.sr_base_path, sr_uuid)
 
 
 def destroy_cached_images(session, sr_ref, all_cached=False, dry_run=False):
@@ -908,7 +985,7 @@ def _make_partition(session, dev, partition_start, partition_end):
                   'mklabel', 'msdos', run_as_root=True,
                   check_exit_code=not session.is_local_connection)
 
-    utils.execute('parted', '--script', dev_path,
+    utils.execute('parted', '--script', dev_path, '--',
                   'mkpart', 'primary',
                   partition_start,
                   partition_end,
@@ -1077,7 +1154,7 @@ def _create_kernel_image(context, session, instance, name_label, image_id,
     Returns: A list of dictionaries that describe VDIs
     """
     filename = ""
-    if CONF.cache_images:
+    if CONF.xenserver.cache_images:
         args = {}
         args['cached-image'] = image_id
         args['new-image-uuid'] = str(uuid.uuid4())
@@ -1186,7 +1263,7 @@ def _create_image(context, session, instance, name_label, image_id,
 
     Returns: A list of dictionaries that describe VDIs
     """
-    cache_images = CONF.cache_images.lower()
+    cache_images = CONF.xenserver.cache_images.lower()
 
     # Determine if the image is cacheable
     if image_type == ImageType.DISK_ISO:
@@ -1203,7 +1280,7 @@ def _create_image(context, session, instance, name_label, image_id,
         cache = False
     else:
         LOG.warning(_("Unrecognized cache_images value '%s', defaulting to"
-                      " True"), CONF.cache_images)
+                      " True"), CONF.xenserver.cache_images)
         cache = True
 
     # Fetch (and cache) the image
@@ -1254,22 +1331,22 @@ def _make_uuid_stack():
 
 def _image_uses_bittorrent(context, instance):
     bittorrent = False
-    xenapi_torrent_images = CONF.xenapi_torrent_images.lower()
+    torrent_images = CONF.xenserver.torrent_images.lower()
 
-    if xenapi_torrent_images == 'all':
+    if torrent_images == 'all':
         bittorrent = True
-    elif xenapi_torrent_images == 'some':
+    elif torrent_images == 'some':
         sys_meta = utils.instance_sys_meta(instance)
         try:
             bittorrent = strutils.bool_from_string(
                 sys_meta['image_bittorrent'])
         except KeyError:
             pass
-    elif xenapi_torrent_images == 'none':
+    elif torrent_images == 'none':
         pass
     else:
-        LOG.warning(_("Invalid value '%s' for xenapi_torrent_images"),
-                    xenapi_torrent_images)
+        LOG.warning(_("Invalid value '%s' for torrent_images"),
+                    torrent_images)
 
     return bittorrent
 
@@ -1289,9 +1366,9 @@ def _choose_download_handler(context, instance):
 
 
 def get_compression_level():
-    level = CONF.xenapi_image_compression_level
+    level = CONF.xenserver.image_compression_level
     if level is not None and (level < 1 or level > 9):
-        LOG.warn(_("Invalid value '%d' for xenapi_image_compression_level"),
+        LOG.warn(_("Invalid value '%d' for image_compression_level"),
                  level)
         return None
     return level
@@ -1420,8 +1497,8 @@ def _fetch_disk_image(context, session, instance, name_label, image_id,
         # Make room for MBR.
         vdi_size += MBR_SIZE_BYTES
     elif (image_type in (ImageType.KERNEL, ImageType.RAMDISK) and
-          vdi_size > CONF.max_kernel_ramdisk_size):
-        max_size = CONF.max_kernel_ramdisk_size
+          vdi_size > CONF.xenserver.max_kernel_ramdisk_size):
+        max_size = CONF.xenserver.max_kernel_ramdisk_size
         raise exception.NovaException(
             _("Kernel/Ramdisk image is too large: %(vdi_size)d bytes, "
               "max %(max_size)d bytes") %
@@ -1450,7 +1527,7 @@ def _fetch_disk_image(context, session, instance, name_label, image_id,
 
             # Let the plugin copy the correct number of bytes.
             args['image-size'] = str(vdi_size)
-            if CONF.cache_images:
+            if CONF.xenserver.cache_images:
                 args['cached-image'] = image_id
             filename = session.call_plugin('kernel', 'copy_vdi', args)
 
@@ -1721,13 +1798,14 @@ def _find_sr(session):
     """Return the storage repository to hold VM images."""
     host = session.get_xenapi_host()
     try:
-        tokens = CONF.sr_matching_filter.split(':')
+        tokens = CONF.xenserver.sr_matching_filter.split(':')
         filter_criteria = tokens[0]
         filter_pattern = tokens[1]
     except IndexError:
         # oops, flag is invalid
         LOG.warning(_("Flag sr_matching_filter '%s' does not respect "
-                      "formatting convention"), CONF.sr_matching_filter)
+                      "formatting convention"),
+                    CONF.xenserver.sr_matching_filter)
         return None
 
     if filter_criteria == 'other-config':
@@ -1797,7 +1875,7 @@ def _find_iso_sr(session):
 
 def _get_rrd_server():
     """Return server's scheme and address to use for retrieving RRD XMLs."""
-    xs_url = urlparse.urlparse(CONF.xenapi_connection_url)
+    xs_url = urlparse.urlparse(CONF.xenserver.connection_url)
     return [xs_url.scheme, xs_url.netloc]
 
 
@@ -1806,8 +1884,8 @@ def _get_rrd(server, vm_uuid):
     try:
         xml = urllib.urlopen("%s://%s:%s@%s/vm_rrd?uuid=%s" % (
             server[0],
-            CONF.xenapi_connection_username,
-            CONF.xenapi_connection_password,
+            CONF.xenserver.connection_username,
+            CONF.xenserver.connection_password,
             server[1],
             vm_uuid))
         return xml.read()
@@ -1820,11 +1898,11 @@ def _get_rrd(server, vm_uuid):
 
 def _get_all_vdis_in_sr(session, sr_ref):
     for vdi_ref in session.call_xenapi('SR.get_VDIs', sr_ref):
-        try:
-            vdi_rec = session.call_xenapi('VDI.get_record', vdi_ref)
+        vdi_rec = session.get_rec('VDI', vdi_ref)
+        # Check to make sure the record still exists. It may have
+        # been deleted between the get_all call and get_rec call
+        if vdi_rec:
             yield vdi_ref, vdi_rec
-        except session.XenAPI.Failure:
-            continue
 
 
 def get_instance_vdis_for_sr(session, vm_ref, sr_ref):
@@ -1927,7 +2005,7 @@ def _wait_for_vhd_coalesce(session, instance, sr_ref, vdi_ref,
         base_uuid = _get_vhd_parent_uuid(session, parent_ref)
         return parent_uuid, base_uuid
 
-    max_attempts = CONF.xenapi_vhd_coalesce_max_attempts
+    max_attempts = CONF.xenserver.vhd_coalesce_max_attempts
     for i in xrange(max_attempts):
         # NOTE(sirp): This rescan is necessary to ensure the VM's `sm_config`
         # matches the underlying VHDs.
@@ -1944,7 +2022,7 @@ def _wait_for_vhd_coalesce(session, instance, sr_ref, vdi_ref,
             base_uuid = _get_vhd_parent_uuid(session, parent_ref)
             return parent_uuid, base_uuid
 
-        greenthread.sleep(CONF.xenapi_vhd_coalesce_poll_interval)
+        greenthread.sleep(CONF.xenserver.vhd_coalesce_poll_interval)
 
     msg = (_("VHD coalesce attempts exceeded (%d)"
              ", giving up...") % max_attempts)
@@ -1961,12 +2039,12 @@ def _remap_vbd_dev(dev):
     For now, we work around it by just doing a string replace.
     """
     # NOTE(sirp): This hack can go away when we pull support for Maverick
-    should_remap = CONF.xenapi_remap_vbd_dev
+    should_remap = CONF.xenserver.remap_vbd_dev
     if not should_remap:
         return dev
 
     old_prefix = 'xvd'
-    new_prefix = CONF.xenapi_remap_vbd_dev_prefix
+    new_prefix = CONF.xenserver.remap_vbd_dev_prefix
     remapped_dev = dev.replace(old_prefix, new_prefix)
 
     return remapped_dev
@@ -1974,7 +2052,7 @@ def _remap_vbd_dev(dev):
 
 def _wait_for_device(dev):
     """Wait for device node to appear."""
-    for i in xrange(0, CONF.block_device_creation_timeout):
+    for i in xrange(0, CONF.xenserver.block_device_creation_timeout):
         dev_path = utils.make_dev_path(dev)
         if os.path.exists(dev_path):
             return
@@ -2249,7 +2327,7 @@ def _copy_partition(session, src_ref, dst_ref, partition, virtual_size):
 
             _write_partition(session, virtual_size, dst)
 
-            if CONF.xenapi_sparse_copy:
+            if CONF.xenserver.sparse_copy:
                 _sparse_copy(src_path, dst_path, virtual_size)
             else:
                 num_blocks = virtual_size / SECTOR_SIZE
@@ -2407,7 +2485,7 @@ def ensure_correct_host(session):
         if exc.details[0] != 'UUID_INVALID':
             raise
         raise Exception(_('This domU must be running on the host '
-                          'specified by xenapi_connection_url'))
+                          'specified by connection_url'))
 
 
 def import_all_migrated_disks(session, instance):
@@ -2499,15 +2577,15 @@ def handle_ipxe_iso(session, instance, cd_vdi, network_info):
     provider can either add that package manually to Dom0 or include the
     `mkisofs` binary in the image itself.
     """
-    boot_menu_url = CONF.xenapi_ipxe_boot_menu_url
+    boot_menu_url = CONF.xenserver.ipxe_boot_menu_url
     if not boot_menu_url:
-        LOG.warn(_('xenapi_ipxe_boot_menu_url not set, user will have to'
+        LOG.warn(_('ipxe_boot_menu_url not set, user will have to'
                    ' enter URL manually...'), instance=instance)
         return
 
-    network_name = CONF.xenapi_ipxe_network_name
+    network_name = CONF.xenserver.ipxe_network_name
     if not network_name:
-        LOG.warn(_('xenapi_ipxe_network_name not set, user will have to'
+        LOG.warn(_('ipxe_network_name not set, user will have to'
                    ' enter IP manually...'), instance=instance)
         return
 
@@ -2538,11 +2616,11 @@ def handle_ipxe_iso(session, instance, cd_vdi, network_info):
     try:
         session.call_plugin_serialized("ipxe", "inject", sr_path,
                 cd_vdi['uuid'], boot_menu_url, ip_address, netmask,
-                gateway, dns, CONF.xenapi_ipxe_mkisofs_cmd)
+                gateway, dns, CONF.xenserver.ipxe_mkisofs_cmd)
     except session.XenAPI.Failure as exc:
         _type, _method, error = exc.details[:3]
         if error == 'CommandNotFound':
             LOG.warn(_("ISO creation tool '%s' does not exist.") %
-                     CONF.xenapi_ipxe_mkisofs_cmd, instance=instance)
+                     CONF.xenserver.ipxe_mkisofs_cmd, instance=instance)
         else:
             raise

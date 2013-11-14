@@ -318,15 +318,15 @@ class MiscFunctionsTest(test.TestCase):
         ctxt = utils.get_test_admin_context()
         metadata1 = {"key": "value"}
         actual = common.check_img_metadata_properties_quota(ctxt, metadata1)
-        self.assertEqual(actual, None)
+        self.assertIsNone(actual)
 
         metadata2 = {"key": "v" * 260}
         actual = common.check_img_metadata_properties_quota(ctxt, metadata2)
-        self.assertEqual(actual, None)
+        self.assertIsNone(actual)
 
         metadata3 = {"key": ""}
         actual = common.check_img_metadata_properties_quota(ctxt, metadata3)
-        self.assertEqual(actual, None)
+        self.assertIsNone(actual)
 
     def test_check_img_metadata_properties_quota_inv_metadata(self):
         ctxt = utils.get_test_admin_context()
@@ -343,11 +343,11 @@ class MiscFunctionsTest(test.TestCase):
                 common.check_img_metadata_properties_quota, ctxt, metadata3)
 
         metadata4 = None
-        self.assertEqual(common.check_img_metadata_properties_quota(ctxt,
-                                                        metadata4), None)
+        self.assertIsNone(common.check_img_metadata_properties_quota(ctxt,
+                                                        metadata4))
         metadata5 = {}
-        self.assertEqual(common.check_img_metadata_properties_quota(ctxt,
-                                                        metadata5), None)
+        self.assertIsNone(common.check_img_metadata_properties_quota(ctxt,
+                                                        metadata5))
 
     def test_task_and_vm_state_from_status(self):
         fixture = 'reboot'
@@ -368,14 +368,14 @@ class MetadataXMLDeserializationTest(test.TestCase):
         </metadata>"""
         output = self.deserializer.deserialize(request_body, 'create')
         expected = {"body": {"metadata": {"123": "asdf", "567": "jkl;"}}}
-        self.assertEquals(output, expected)
+        self.assertEqual(output, expected)
 
     def test_create_empty(self):
         request_body = """
         <metadata xmlns="http://docs.openstack.org/compute/api/v1.1"/>"""
         output = self.deserializer.deserialize(request_body, 'create')
         expected = {"body": {"metadata": {}}}
-        self.assertEquals(output, expected)
+        self.assertEqual(output, expected)
 
     def test_update_all(self):
         request_body = """
@@ -385,7 +385,7 @@ class MetadataXMLDeserializationTest(test.TestCase):
         </metadata>"""
         output = self.deserializer.deserialize(request_body, 'update_all')
         expected = {"body": {"metadata": {"123": "asdf", "567": "jkl;"}}}
-        self.assertEquals(output, expected)
+        self.assertEqual(output, expected)
 
     def test_update(self):
         request_body = """
@@ -393,7 +393,7 @@ class MetadataXMLDeserializationTest(test.TestCase):
               key='123'>asdf</meta>"""
         output = self.deserializer.deserialize(request_body, 'update')
         expected = {"body": {"meta": {"123": "asdf"}}}
-        self.assertEquals(output, expected)
+        self.assertEqual(output, expected)
 
 
 class MetadataXMLSerializationTest(test.TestCase):

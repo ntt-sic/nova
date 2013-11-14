@@ -42,6 +42,7 @@ from nova.tests.image import fake as fake_image
 from nova.tests import matchers
 from nova.tests.virt.hyperv import db_fakes
 from nova.tests.virt.hyperv import fake
+from nova import unit
 from nova import utils
 from nova.virt import configdrive
 from nova.virt import driver
@@ -277,12 +278,12 @@ class HyperVAPITestCase(test.NoDBTestCase):
 
         self.assertEqual(dic['vcpus'], cpu_info['NumberOfLogicalProcessors'])
         self.assertEqual(dic['hypervisor_hostname'], platform.node())
-        self.assertEqual(dic['memory_mb'], tot_mem_kb / 1024)
+        self.assertEqual(dic['memory_mb'], tot_mem_kb / unit.Ki)
         self.assertEqual(dic['memory_mb_used'],
-                         tot_mem_kb / 1024 - free_mem_kb / 1024)
-        self.assertEqual(dic['local_gb'], tot_hdd_b / 1024 ** 3)
+                         tot_mem_kb / unit.Ki - free_mem_kb / unit.Ki)
+        self.assertEqual(dic['local_gb'], tot_hdd_b / unit.Gi)
         self.assertEqual(dic['local_gb_used'],
-                         tot_hdd_b / 1024 ** 3 - free_hdd_b / 1024 ** 3)
+                         tot_hdd_b / unit.Gi - free_hdd_b / unit.Gi)
         self.assertEqual(dic['hypervisor_version'],
                          windows_version.replace('.', ''))
         self.assertEqual(dic['supported_instances'],
@@ -614,7 +615,7 @@ class HyperVAPITestCase(test.NoDBTestCase):
         self._setup_destroy_mocks()
 
         self._mox.ReplayAll()
-        self._conn.destroy(self._instance_data, None)
+        self._conn.destroy(self._context, self._instance_data, None)
         self._mox.VerifyAll()
 
     def test_live_migration_unsupported_os(self):
@@ -742,9 +743,9 @@ class HyperVAPITestCase(test.NoDBTestCase):
         self._mox.VerifyAll()
 
         if cow:
-            self.assertTrue(self._fetched_image is not None)
+            self.assertIsNotNone(self._fetched_image)
         else:
-            self.assertTrue(self._fetched_image is None)
+            self.assertIsNone(self._fetched_image)
 
     def test_snapshot_with_update_failure(self):
         (snapshot_name, func_call_matcher) = self._setup_snapshot_mocks()

@@ -252,22 +252,6 @@ class _VirtDriverTestCase(_FakeDriverBackendTestCase):
                                  lambda *args, **kwargs: None)
 
     @catch_notimplementederror
-    def test_live_snapshot_not_running(self):
-        instance_ref = test_utils.get_test_instance()
-        img_ref = self.image_service.create(self.ctxt, {'name': 'snap-1'})
-        self.assertRaises(exception.InstanceNotRunning,
-                          self.connection.live_snapshot,
-                          self.ctxt, instance_ref, img_ref['id'],
-                          lambda *args, **kwargs: None)
-
-    @catch_notimplementederror
-    def test_live_snapshot_running(self):
-        img_ref = self.image_service.create(self.ctxt, {'name': 'snap-1'})
-        instance_ref, network_info = self._get_running_instance()
-        self.connection.live_snapshot(self.ctxt, instance_ref, img_ref['id'],
-                                      lambda *args, **kwargs: None)
-
-    @catch_notimplementederror
     def test_reboot(self):
         reboot_type = "SOFT"
         instance_ref, network_info = self._get_running_instance()
@@ -282,7 +266,7 @@ class _VirtDriverTestCase(_FakeDriverBackendTestCase):
         ip = netaddr.IPAddress(host_ip)
 
         # For now, assume IPv4.
-        self.assertEquals(ip.version, 4)
+        self.assertEqual(ip.version, 4)
 
     @catch_notimplementederror
     def test_set_admin_password(self):
@@ -401,14 +385,14 @@ class _VirtDriverTestCase(_FakeDriverBackendTestCase):
         fake_instance = {'id': 42, 'name': 'I just made this up!',
                          'uuid': 'bda5fb9e-b347-40e8-8256-42397848cb00'}
         network_info = test_utils.get_test_network_info()
-        self.connection.destroy(fake_instance, network_info)
+        self.connection.destroy(self.ctxt, fake_instance, network_info)
 
     @catch_notimplementederror
     def test_destroy_instance(self):
         instance_ref, network_info = self._get_running_instance()
         self.assertIn(instance_ref['name'],
                       self.connection.list_instances())
-        self.connection.destroy(instance_ref, network_info)
+        self.connection.destroy(self.ctxt, instance_ref, network_info)
         self.assertNotIn(instance_ref['name'],
                          self.connection.list_instances())
 
@@ -499,13 +483,13 @@ class _VirtDriverTestCase(_FakeDriverBackendTestCase):
     def test_block_stats(self):
         instance_ref, network_info = self._get_running_instance()
         stats = self.connection.block_stats(instance_ref['name'], 'someid')
-        self.assertEquals(len(stats), 5)
+        self.assertEqual(len(stats), 5)
 
     @catch_notimplementederror
     def test_interface_stats(self):
         instance_ref, network_info = self._get_running_instance()
         stats = self.connection.interface_stats(instance_ref['name'], 'someid')
-        self.assertEquals(len(stats), 8)
+        self.assertEqual(len(stats), 8)
 
     @catch_notimplementederror
     def test_get_console_output(self):

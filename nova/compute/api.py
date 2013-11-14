@@ -216,6 +216,24 @@ def check_instance_cell(fn):
     return _wrapped
 
 
+def _diff_dict(orig, new):
+    """
+    Return a dict describing how to change orig to new.  The keys
+    correspond to values that have changed; the value will be a list
+    of one or two elements.  The first element of the list will be
+    either '+' or '-', indicating whether the key was updated or
+    deleted; if the key was updated, the list will contain a second
+    element, giving the updated value.
+    """
+    # Figure out what keys went away
+    result = dict((k, ['-']) for k in set(orig.keys()) - set(new.keys()))
+    # Compute the updates
+    for key, value in new.items():
+        if key not in orig or value != orig[key]:
+            result[key] = ['+', value]
+    return result
+
+
 class API(base.Base):
     """API for interacting with the compute manager."""
 
@@ -328,10 +346,7 @@ class API(base.Base):
             quotas = exc.kwargs['quotas']
             usages = exc.kwargs['usages']
             overs = exc.kwargs['overs']
-
-            headroom = dict((res, quotas[res] -
-                             (usages[res]['in_use'] + usages[res]['reserved']))
-                            for res in quotas.keys())
+            headroom = exc.kwargs['headroom']
 
             allowed = headroom['instances']
             # Reduce 'allowed' instances in line with the cores & ram headroom
@@ -387,6 +402,9 @@ class API(base.Base):
         """Enforce quota limits on metadata properties."""
         if not metadata:
             metadata = {}
+        if not isinstance(metadata, dict):
+            msg = (_("Metadata type should be dict."))
+            raise exception.InvalidMetadata(reason=msg)
         num_metadata = len(metadata)
         try:
             QUOTAS.limit_check(context, metadata_items=num_metadata)
@@ -404,15 +422,12 @@ class API(base.Base):
         for k, v in metadata.iteritems():
             if len(k) == 0:
                 msg = _("Metadata property key blank")
-                LOG.warn(msg)
                 raise exception.InvalidMetadata(reason=msg)
             if len(k) > 255:
                 msg = _("Metadata property key greater than 255 characters")
-                LOG.warn(msg)
                 raise exception.InvalidMetadataSize(reason=msg)
             if len(v) > 255:
                 msg = _("Metadata property value greater than 255 characters")
-                LOG.warn(msg)
                 raise exception.InvalidMetadataSize(reason=msg)
 
     def _check_requested_secgroups(self, context, secgroups):
@@ -1789,34 +1804,6 @@ class API(base.Base):
             limit=limit, marker=marker, expected_attrs=fields)
 
     @wrap_check_policy
-    @check_instance_state(vm_state=[vm_states.ACTIVE, vm_states.PAUSED])
-    def live_snapshot(self, context, instance, name, extra_properties=None,
-                 image_id=None):
-        """Live Snapshot the given instance.
-
-        :param instance: nova.db.sqlalchemy.models.Instance
-        :param name: name of the backup or snapshot
-        :param extra_properties: dict of extra image properties to include
-
-        :returns: A dict containing image metadata
-        """
-        if image_id:
-            # The image entry has already been created, so just pull the
-            # metadata.
-            image_meta = self.image_service.show(context, image_id)
-        else:
-            image_meta = self._create_image(context, instance, name,
-                    'snapshot', extra_properties=extra_properties)
-
-        instance = self.update(context, instance,
-                               task_state=task_states.IMAGE_LIVE_SNAPSHOT,
-                               expected_task_state=None)
-
-        self.compute_rpcapi.live_snapshot_instance(context, instance=instance,
-                image_id=image_meta['id'])
-        return image_meta
-
-    @wrap_check_policy
     @check_instance_cell
     @check_instance_state(vm_state=[vm_states.ACTIVE, vm_states.STOPPED])
     def backup(self, context, instance, name, backup_type, rotation,
@@ -2318,10 +2305,7 @@ class API(base.Base):
             quotas = exc.kwargs['quotas']
             usages = exc.kwargs['usages']
             overs = exc.kwargs['overs']
-
-            headroom = dict((res, quotas[res] -
-                             (usages[res]['in_use'] + usages[res]['reserved']))
-                            for res in quotas.keys())
+            headroom = exc.kwargs['headroom']
 
             resource = overs[0]
             used = quotas[resource] - headroom[resource]
@@ -2859,7 +2843,7 @@ class API(base.Base):
                                          _metadata, True)
         instance['metadata'] = metadata
         notifications.send_update(context, instance, instance)
-        diff = utils.diff_dict(orig, _metadata)
+        diff = _diff_dict(orig, _metadata)
         self.compute_rpcapi.change_instance_metadata(context,
                                                      instance=instance,
                                                      diff=diff)
@@ -2991,11 +2975,20 @@ class HostAPI(base.Base):
             raise exception.ComputeServiceUnavailable(host=host_name)
         return service['host']
 
+    @wrap_exception()
     def set_host_enabled(self, context, host_name, enabled):
         """Sets the specified host's ability to accept new instances."""
         host_name = self._assert_host_exists(context, host_name)
-        return self.rpcapi.set_host_enabled(context, enabled=enabled,
+        payload = {'host_name': host_name, 'enabled': enabled}
+        compute_utils.notify_about_host_update(context,
+                                               'set_enabled.start',
+                                               payload)
+        result = self.rpcapi.set_host_enabled(context, enabled=enabled,
                 host=host_name)
+        compute_utils.notify_about_host_update(context,
+                                               'set_enabled.end',
+                                               payload)
+        return result
 
     def get_host_uptime(self, context, host_name):
         """Returns the result of calling "uptime" on the target host."""
@@ -3003,19 +2996,37 @@ class HostAPI(base.Base):
                          must_be_up=True)
         return self.rpcapi.get_host_uptime(context, host=host_name)
 
+    @wrap_exception()
     def host_power_action(self, context, host_name, action):
         """Reboots, shuts down or powers up the host."""
         host_name = self._assert_host_exists(context, host_name)
-        return self.rpcapi.host_power_action(context, action=action,
+        payload = {'host_name': host_name, 'action': action}
+        compute_utils.notify_about_host_update(context,
+                                               'power_action.start',
+                                               payload)
+        result = self.rpcapi.host_power_action(context, action=action,
                 host=host_name)
+        compute_utils.notify_about_host_update(context,
+                                               'power_action.end',
+                                               payload)
+        return result
 
+    @wrap_exception()
     def set_host_maintenance(self, context, host_name, mode):
         """Start/Stop host maintenance window. On start, it triggers
         guest VMs evacuation.
         """
         host_name = self._assert_host_exists(context, host_name)
-        return self.rpcapi.host_maintenance_mode(context,
+        payload = {'host_name': host_name, 'mode': mode}
+        compute_utils.notify_about_host_update(context,
+                                               'set_maintenance.start',
+                                               payload)
+        result = self.rpcapi.host_maintenance_mode(context,
                 host_param=host_name, mode=mode, host=host_name)
+        compute_utils.notify_about_host_update(context,
+                                               'set_maintenance.end',
+                                               payload)
+        return result
 
     def service_get_all(self, context, filters=None, set_zones=False):
         """Returns a list of services, optionally filtering the results.

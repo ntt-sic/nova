@@ -74,7 +74,7 @@ class ConductorManager(manager.Manager):
     namespace.  See the ComputeTaskManager class for details.
     """
 
-    RPC_API_VERSION = '1.60'
+    RPC_API_VERSION = '1.61'
 
     def __init__(self, *args, **kwargs):
         super(ConductorManager, self).__init__(service_name='conductor',
@@ -257,11 +257,13 @@ class ConductorManager(manager.Manager):
     def get_backdoor_port(self, context):
         return self.backdoor_port
 
+    # NOTE(danms): This method can be removed in version 2.0 of this API.
     def security_group_get_by_instance(self, context, instance):
         group = self.db.security_group_get_by_instance(context,
                                                        instance['uuid'])
         return jsonutils.to_primitive(group)
 
+    # NOTE(danms): This method can be removed in version 2.0 of this API.
     def security_group_rule_get_by_security_group(self, context, secgroup):
         rules = self.db.security_group_rule_get_by_security_group(
             context, secgroup['id'])
@@ -367,7 +369,8 @@ class ConductorManager(manager.Manager):
         return jsonutils.to_primitive(result)
 
     def instance_destroy(self, context, instance):
-        self.db.instance_destroy(context, instance['uuid'])
+        result = self.db.instance_destroy(context, instance['uuid'])
+        return jsonutils.to_primitive(result)
 
     def instance_info_cache_delete(self, context, instance):
         self.db.instance_info_cache_delete(context, instance['uuid'])
@@ -520,8 +523,8 @@ class ConductorManager(manager.Manager):
         ec2_ids['ami-id'] = ec2utils.glance_id_to_ec2_id(context,
                                                          instance['image_ref'])
         for image_type in ['kernel', 'ramdisk']:
-            if '%s_id' % image_type in instance:
-                image_id = instance['%s_id' % image_type]
+            image_id = instance.get('%s_id' % image_type)
+            if image_id is not None:
                 ec2_image_type = ec2utils.image_type(image_type)
                 ec2_id = ec2utils.glance_id_to_ec2_id(context, image_id,
                                                       ec2_image_type)

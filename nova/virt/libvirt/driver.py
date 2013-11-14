@@ -850,11 +850,11 @@ class LibvirtDriver(driver.ComputeDriver):
             LOG.info(_("Going to destroy instance again."), instance=instance)
             self._destroy(instance)
 
-    def destroy(self, instance, network_info, block_device_info=None,
-                destroy_disks=True, context=None):
+    def destroy(self, context, instance, network_info, block_device_info=None,
+                destroy_disks=True):
         self._destroy(instance)
-        self._cleanup(instance, network_info, block_device_info,
-                      destroy_disks, context=context)
+        self._cleanup(context, instance, network_info, block_device_info,
+                      destroy_disks)
 
     def _undefine_domain(self, instance):
         try:
@@ -887,8 +887,8 @@ class LibvirtDriver(driver.ComputeDriver):
                                 'Code=%(errcode)s Error=%(e)s') %
                               {'errcode': errcode, 'e': e}, instance=instance)
 
-    def _cleanup(self, instance, network_info, block_device_info,
-                 destroy_disks, context=None):
+    def _cleanup(self, context, instance, network_info, block_device_info,
+                 destroy_disks):
         self._undefine_domain(instance)
         self.unplug_vifs(instance, network_info)
         retry = True
@@ -936,9 +936,9 @@ class LibvirtDriver(driver.ComputeDriver):
             if ('data' in connection_info and
                     'volume_id' in connection_info['data']):
                 volume_id = connection_info['data']['volume_id']
-                encryption = \
-                    encryptors.get_encryption_metadata(context, volume_id,
-                                                       connection_info)
+                encryption = encryptors.get_encryption_metadata(
+                    context, self._volume_api, volume_id, connection_info)
+
                 if encryption:
                     # The volume must be detached from the VM before
                     # disconnecting it from its encryptor. Otherwise, the
@@ -1607,7 +1607,6 @@ class LibvirtDriver(driver.ComputeDriver):
             raise exception.NovaException(msg)
 
         snapshot = vconfig.LibvirtConfigGuestSnapshot()
-        disks = []
 
         for current_name, new_filename in disks_to_snap:
             snap_disk = vconfig.LibvirtConfigGuestSnapshotDisk()
@@ -3272,7 +3271,6 @@ class LibvirtDriver(driver.ComputeDriver):
 
         for vol in block_device_mapping:
             connection_info = vol['connection_info']
-            disk_dev = vol['mount_device'].rpartition("/")[2]
             disk_info = blockinfo.get_info_from_bdm(CONF.libvirt_type, vol)
             conf = self.volume_driver_method('connect_volume',
                                              connection_info,
@@ -3286,9 +3284,9 @@ class LibvirtDriver(driver.ComputeDriver):
                         {'connection_info': jsonutils.dumps(connection_info)})
 
                 volume_id = connection_info['data']['volume_id']
-                encryption = \
-                        encryptors.get_encryption_metadata(context, volume_id,
-                                                           connection_info)
+                encryption = encryptors.get_encryption_metadata(
+                    context, self._volume_api, volume_id, connection_info)
+
                 if encryption:
                     encryptor = self._get_volume_encryptor(connection_info,
                                                            encryption)
@@ -4226,7 +4224,6 @@ class LibvirtDriver(driver.ComputeDriver):
             block_device_info)
         for vol in block_device_mapping:
             connection_info = vol['connection_info']
-            disk_dev = vol['mount_device'].rpartition("/")[2]
             disk_info = blockinfo.get_info_from_bdm(CONF.libvirt_type, vol)
             self.volume_driver_method('connect_volume',
                                       connection_info,

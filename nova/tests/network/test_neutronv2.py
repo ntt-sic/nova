@@ -99,6 +99,7 @@ class TestNeutronClient(test.TestCase):
                                             auth_token='token')
         self.mox.StubOutWithMock(client.Client, "__init__")
         client.Client.__init__(
+            auth_strategy=None,
             endpoint_url=CONF.neutron_url,
             token=my_context.auth_token,
             timeout=CONF.neutron_url_timeout,
@@ -106,6 +107,12 @@ class TestNeutronClient(test.TestCase):
             ca_cert=None).AndReturn(None)
         self.mox.ReplayAll()
         neutronv2.get_client(my_context)
+
+    def test_withouttoken(self):
+        my_context = context.RequestContext('userid', 'my_tenantid')
+        self.assertRaises(exceptions.Unauthorized,
+                          neutronv2.get_client,
+                          my_context)
 
     def test_withouttoken_keystone_connection_error(self):
         self.flags(neutron_auth_strategy='keystone')
@@ -122,13 +129,20 @@ class TestNeutronClient(test.TestCase):
         my_context = context.RequestContext('userid', 'my_tenantid')
         self.mox.StubOutWithMock(client.Client, "__init__")
         client.Client.__init__(
+            auth_url=CONF.neutron_admin_auth_url,
+            password=CONF.neutron_admin_password,
+            tenant_name=CONF.neutron_admin_tenant_name,
+            username=CONF.neutron_admin_username,
             endpoint_url=CONF.neutron_url,
             auth_strategy=None,
             timeout=CONF.neutron_url_timeout,
             insecure=False,
             ca_cert=None).AndReturn(None)
         self.mox.ReplayAll()
-        neutronv2.get_client(my_context)
+
+        # Note that the context is not elevated, but the True is passed in
+        # which will force an elevation to admin credentials
+        neutronv2.get_client(my_context, True)
 
 
 class TestNeutronv2Base(test.TestCase):
@@ -498,9 +512,62 @@ class TestNeutronv2(TestNeutronv2Base):
                              admin=True).MultipleTimes().AndReturn(
             self.moxed_client)
         self.mox.ReplayAll()
+        self.instance['info_cache'] = {'network_info': []}
         nw_inf = api.get_instance_nw_info(self.context,
                                           self.instance,
                                           networks=self.nets1)
+        self._verify_nw_info(nw_inf, 0)
+
+    def test_get_instance_nw_info_with_nets_and_info_cache(self):
+        # This tests that adding an interface to an instance does not
+        # remove the first instance from the instance.
+        api = neutronapi.API()
+        self.mox.StubOutWithMock(api.db, 'instance_info_cache_update')
+        api.db.instance_info_cache_update(
+            mox.IgnoreArg(),
+            self.instance['uuid'], mox.IgnoreArg())
+        self.moxed_client.list_ports(
+            tenant_id=self.instance['project_id'],
+            device_id=self.instance['uuid']).AndReturn(
+                {'ports': self.port_data1})
+        port_data = self.port_data1
+        for ip in port_data[0]['fixed_ips']:
+            self.moxed_client.list_floatingips(
+                fixed_ip_address=ip['ip_address'],
+                port_id=port_data[0]['id']).AndReturn(
+                    {'floatingips': self.float_data1})
+        self.moxed_client.list_subnets(
+            id=mox.SameElementsAs(['my_subid1'])).AndReturn(
+                {'subnets': self.subnet_data1})
+        self.moxed_client.list_ports(
+            network_id='my_netid1',
+            device_owner='network:dhcp').AndReturn(
+                {'ports': self.dhcp_port_data1})
+        neutronv2.get_client(mox.IgnoreArg(),
+                             admin=True).MultipleTimes().AndReturn(
+            self.moxed_client)
+        self.mox.ReplayAll()
+        network_model = model.Network(id='network_id',
+                                      bridge='br-int',
+                                      injected='injected',
+                                      label='fake_network',
+                                      tenant_name='fake_tenant')
+
+        self.instance['info_cache'] = {
+            'network_info': [{'id': 'port_id',
+                              'address': 'mac_address',
+                              'network': network_model,
+                              'type': 'ovs',
+                              'ovs_interfaceid': 'ovs_interfaceid',
+                              'devname': 'devname'}]}
+        nw_inf = api.get_instance_nw_info(self.context,
+                                          self.instance,
+                                          networks=self.nets1)
+        self.assertEqual(2, len(nw_inf))
+        for k, v in self.instance['info_cache']['network_info'][0].iteritems():
+            self.assertEqual(nw_inf[0][k], v)
+        # remove first inf and verify that the second interface is correct
+        del nw_inf[0]
         self._verify_nw_info(nw_inf, 0)
 
     def test_get_instance_nw_info_without_subnet(self):
@@ -971,6 +1038,24 @@ class TestNeutronv2(TestNeutronv2Base):
                           api.validate_networks,
                           self.context, requested_networks)
 
+    def test_validate_networks_port_show_rasies_non404(self):
+        # Verify that the correct exception is thrown when a non existent
+        # port is passed to validate_networks.
+
+        requested_networks = [('my_netid1', None, '3123-ad34-bc43-32332ca33e')]
+
+        NeutronNotFound = neutronv2.exceptions.NeutronClientException(
+                                                            status_code=0)
+        self.moxed_client.show_port(requested_networks[0][2]).AndRaise(
+                                                        NeutronNotFound)
+        self.mox.ReplayAll()
+        # Expected call from setUp.
+        neutronv2.get_client(None)
+        api = neutronapi.API()
+        self.assertRaises(neutronv2.exceptions.NeutronClientException,
+                          api.validate_networks,
+                          self.context, requested_networks)
+
     def test_validate_networks_port_in_use(self):
         requested_networks = [(None, None, self.port_data3[0]['id'])]
         self.moxed_client.show_port(self.port_data3[0]['id']).\
@@ -1184,6 +1269,18 @@ class TestNeutronv2(TestNeutronv2Base):
             AndRaise(NeutronNotFound)
         self.mox.ReplayAll()
         self.assertRaises(exception.FloatingIpNotFound,
+                          api.get_floating_ip,
+                          self.context, floating_ip_id)
+
+    def test_get_floating_ip_raises_non404(self):
+        api = neutronapi.API()
+        NeutronNotFound = neutronv2.exceptions.NeutronClientException(
+            status_code=0)
+        floating_ip_id = self.fip_unassociated['id']
+        self.moxed_client.show_floatingip(floating_ip_id).\
+            AndRaise(NeutronNotFound)
+        self.mox.ReplayAll()
+        self.assertRaises(neutronv2.exceptions.NeutronClientException,
                           api.get_floating_ip,
                           self.context, floating_ip_id)
 
@@ -1530,17 +1627,18 @@ class TestNeutronv2(TestNeutronv2Base):
         net, iid = self._test_nw_info_build_network(model.VIF_TYPE_BRIDGE)
         self.assertEqual(net['bridge'], 'brqnet-id')
         self.assertTrue(net['should_create_bridge'])
-        self.assertEqual(iid, None)
+        self.assertIsNone(iid)
 
     def test_nw_info_build_network_other(self):
         net, iid = self._test_nw_info_build_network(None)
-        self.assertEqual(net['bridge'], None)
+        self.assertIsNone(net['bridge'])
         self.assertNotIn('should_create_bridge', net)
-        self.assertEqual(iid, None)
+        self.assertIsNone(iid)
 
     def test_build_network_info_model(self):
         api = neutronapi.API()
-        fake_inst = {'project_id': 'fake', 'uuid': 'uuid'}
+        fake_inst = {'project_id': 'fake', 'uuid': 'uuid',
+                     'info_cache': {'network_info': []}}
         fake_ports = [
             {'id': 'port0',
              'network_id': 'net-id',
@@ -1581,7 +1679,7 @@ class TestNeutronv2(TestNeutronv2Base):
         self.assertEqual(nw_info[0]['id'], 'port0')
         self.assertEqual(nw_info[0]['address'], 'de:ad:be:ef:00:01')
         self.assertEqual(nw_info[0]['devname'], 'tapport0')
-        self.assertEqual(nw_info[0]['ovs_interfaceid'], None)
+        self.assertIsNone(nw_info[0]['ovs_interfaceid'])
         self.assertEqual(nw_info[0]['type'], model.VIF_TYPE_BRIDGE)
         self.assertEqual(nw_info[0]['network']['bridge'], 'brqnet-id')
 

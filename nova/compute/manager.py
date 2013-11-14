@@ -388,16 +388,6 @@ class ComputeVirtAPI(virtapi.VirtAPI):
                                               instance_uuid,
                                               **updates)
 
-    def security_group_get_by_instance(self, context, instance):
-        return self._compute.conductor_api.security_group_get_by_instance(
-            context, instance)
-
-    def security_group_rule_get_by_security_group(self, context,
-                                                  security_group):
-        return (self._compute.conductor_api.
-                security_group_rule_get_by_security_group(context,
-                                                          security_group))
-
     def provider_fw_rule_get_all(self, context):
         return self._compute.conductor_api.provider_fw_rule_get_all(context)
 
@@ -500,8 +490,7 @@ class ComputeManager(manager.SchedulerDependentManager):
                         'trying to set it to ERROR'),
                       instance_uuid=instance.uuid)
 
-    def _get_instances_on_driver(self, context, filters=None,
-                                 columns_to_join=None):
+    def _get_instances_on_driver(self, context, filters=None):
         """Return a list of instance records for the instances found
         on the hypervisor which satisfy the specified filters. If filters=None
         return a list of instance records for all the instances found on the
@@ -512,8 +501,8 @@ class ComputeManager(manager.SchedulerDependentManager):
         try:
             driver_uuids = self.driver.list_instance_uuids()
             filters['uuid'] = driver_uuids
-            local_instances = self.conductor_api.instance_get_all_by_filters(
-                    context, filters, columns_to_join=columns_to_join)
+            local_instances = instance_obj.InstanceList.get_by_filters(
+                context, filters)
             return local_instances
         except NotImplementedError:
             pass
@@ -521,9 +510,8 @@ class ComputeManager(manager.SchedulerDependentManager):
         # The driver doesn't support uuids listing, so we'll have
         # to brute force.
         driver_instances = self.driver.list_instances()
-        instances = self.conductor_api.instance_get_all_by_filters(
-            context, filters, columns_to_join=columns_to_join)
-        name_map = dict((instance['name'], instance) for instance in instances)
+        instances = instance_obj.InstanceList.get_by_filters(context, filters)
+        name_map = dict((instance.name, instance) for instance in instances)
         local_instances = []
         for driver_instance in driver_instances:
             instance = name_map.get(driver_instance)
@@ -544,12 +532,11 @@ class ComputeManager(manager.SchedulerDependentManager):
         filters = {'deleted': False}
         local_instances = self._get_instances_on_driver(context, filters)
         for instance in local_instances:
-            instance_host = instance['host']
-            if instance_host != our_host:
+            if instance.host != our_host:
                 LOG.info(_('Deleting instance as its host ('
                            '%(instance_host)s) is not equal to our '
                            'host (%(our_host)s).'),
-                         {'instance_host': instance_host,
+                         {'instance_host': instance.host,
                           'our_host': our_host}, instance=instance)
                 destroy_disks = False
                 try:
@@ -567,7 +554,7 @@ class ComputeManager(manager.SchedulerDependentManager):
                              instance=instance)
                     # always destroy disks if the instance was deleted
                     destroy_disks = True
-                self.driver.destroy(instance,
+                self.driver.destroy(context, instance,
                                     network_info,
                                     bdi, destroy_disks)
 
@@ -580,7 +567,7 @@ class ComputeManager(manager.SchedulerDependentManager):
             if data:
                 shared_storage = (self.compute_rpcapi.
                                   check_instance_shared_storage(context,
-                                  instance,
+                                  obj_base.obj_to_primitive(instance),
                                   data))
         except NotImplementedError:
             LOG.warning(_('Hypervisor driver does not support '
@@ -875,8 +862,8 @@ class ComputeManager(manager.SchedulerDependentManager):
             # If we get an instance without it, re-fetch so that the call
             # to network_api (which requires it for instance_type) will
             # succeed.
-            instance = self.conductor_api.instance_get_by_uuid(
-                context, instance['uuid'])
+            instance = instance_obj.Instance.get_by_uuid(context,
+                                                         instance['uuid'])
         network_info = self.network_api.get_instance_nw_info(context,
                                                              instance)
         return network_info
@@ -1252,6 +1239,45 @@ class ComputeManager(manager.SchedulerDependentManager):
                     retry_time = 30
         # Not reached.
 
+    def _build_networks_for_instance(self, context, instance,
+            requested_networks, security_groups):
+
+        # May have been allocated previously and rescheduled to this host
+        network_info = self._get_instance_nw_info(context, instance)
+        if len(network_info) > 0:
+            return network_info
+
+        if not self.is_neutron_security_groups:
+            security_groups = []
+
+        macs = self.driver.macs_for_instance(instance)
+        dhcp_options = self.driver.dhcp_options_for_instance(instance)
+        network_info = self._allocate_network(context, instance,
+                requested_networks, macs, security_groups, dhcp_options)
+
+        if not instance['access_ip_v4'] and not instance['access_ip_v6']:
+            # If CONF.default_access_ip_network_name is set, grab the
+            # corresponding network and set the access ip values accordingly.
+            # Note that when there are multiple ips to choose from, an
+            # arbitrary one will be chosen.
+            network_name = CONF.default_access_ip_network_name
+            if not network_name:
+                return network_info
+
+            access_ips = {}
+            for vif in network_info:
+                if vif['network']['label'] == network_name:
+                    for ip in vif.fixed_ips():
+                        if ip['version'] == 4:
+                            access_ips['access_ip_v4'] = ip['address']
+                        if ip['version'] == 6:
+                            access_ips['access_ip_v6'] = ip['address']
+                    self._instance_update(context, instance['uuid'],
+                            **access_ips)
+                    break
+
+        return network_info
+
     def _allocate_network(self, context, instance, requested_networks, macs,
                           security_groups, dhcp_options):
         """Start network allocation asynchronously.  Return an instance
@@ -1537,6 +1563,20 @@ class ComputeManager(manager.SchedulerDependentManager):
                 requested_networks, security_groups, block_device_mapping,
                 node=None, limits=None):
 
+            try:
+                LOG.audit(_('Starting instance...'), context=context,
+                      instance=instance)
+                self._instance_update(context, instance['uuid'],
+                        vm_state=vm_states.BUILDING, task_state=None,
+                        expected_task_state=(task_states.SCHEDULING, None))
+            except exception.InstanceNotFound:
+                msg = _('Instance disappeared before build.')
+                LOG.debug(msg, instance=instance)
+                return
+            except exception.UnexpectedTaskStateError as e:
+                LOG.debug(e.format_message(), instance=instance)
+                return
+
             # b64 decode the files to inject:
             decoded_files = self._decode_files(injected_files)
 
@@ -1549,13 +1589,24 @@ class ComputeManager(manager.SchedulerDependentManager):
 
             try:
                 self._build_and_run_instance(context, instance, image,
-                        decoded_files, admin_password, block_device_mapping,
-                        node, limits)
+                        decoded_files, admin_password, requested_networks,
+                        security_groups, block_device_mapping, node, limits)
             except exception.BuildAbortException as e:
                 LOG.exception(e.format_message(), instance=instance)
+                self._cleanup_allocated_networks(context, instance,
+                        requested_networks)
                 self._set_instance_error_state(context, instance['uuid'])
             except exception.RescheduledException as e:
                 LOG.debug(e.format_message(), instance=instance)
+                # dhcp_options are per host, so if they're set we need to
+                # deallocate the networks and reallocate on the next host.
+                if self.driver.dhcp_options_for_instance(instance):
+                    self._cleanup_allocated_networks(context, instance,
+                            requested_networks)
+
+                self._instance_update(context, instance['uuid'],
+                        task_state=task_states.SCHEDULING)
+
                 self.compute_task_api.build_instances(context, [instance],
                         image, filter_properties, admin_password,
                         injected_files, requested_networks, security_groups,
@@ -1563,11 +1614,21 @@ class ComputeManager(manager.SchedulerDependentManager):
             except exception.InstanceNotFound:
                 msg = _('Instance disappeared during build.')
                 LOG.debug(msg, instance=instance)
+            except exception.BuildAbortException:
+                self._cleanup_allocated_networks(context, instance,
+                        requested_networks)
+                self._set_instance_error_state(context, instance['uuid'])
+            except exception.UnexpectedTaskStateError as e:
+                LOG.debug(e.format_message(), instance=instance)
+                self._cleanup_allocated_networks(context, instance,
+                        requested_networks)
             except Exception:
                 # Should not reach here.
-                self._set_instance_error_state(context, instance['uuid'])
-                msg = _('Unexpected build failure, not rescheduling build.')
+                msg = 'Unexpected build failure, not rescheduling build.'
                 LOG.exception(msg, instance=instance)
+                self._cleanup_allocated_networks(context, instance,
+                        requested_networks)
+                self._set_instance_error_state(context, instance['uuid'])
 
         do_build_and_run_instance(context, instance, image, request_spec,
                 filter_properties, admin_password, injected_files,
@@ -1575,39 +1636,102 @@ class ComputeManager(manager.SchedulerDependentManager):
                 node, limits)
 
     def _build_and_run_instance(self, context, instance, image, injected_files,
-            admin_password, block_device_mapping, node, limits):
+            admin_password, requested_networks, security_groups,
+            block_device_mapping, node, limits):
 
+        image_name = image.get('name')
+        self._notify_about_instance_usage(context, instance, 'create.start',
+                extra_usage_info={'image_name': image_name})
         try:
             rt = self._get_resource_tracker(node)
             with rt.instance_claim(context, instance, limits):
-                with self._build_resources(context, instance, image,
+                with self._build_resources(context, instance,
+                        requested_networks, security_groups, image,
                         block_device_mapping) as resources:
+                    instance = self._instance_update(context, instance['uuid'],
+                            vm_state=vm_states.BUILDING,
+                            task_state=task_states.SPAWNING,
+                            expected_task_state=
+                            task_states.BLOCK_DEVICE_MAPPING)
                     block_device_info = resources['block_device_info']
+                    network_info = resources['network_info']
                     self.driver.spawn(context, instance, image,
                                       injected_files, admin_password,
+                                      network_info=network_info,
                                       block_device_info=block_device_info)
-        except exception.InstanceNotFound:
+                    self._notify_about_instance_usage(context, instance,
+                            'create.end',
+                            extra_usage_info={'message': _('Success')},
+                            network_info=network_info)
+        except exception.InstanceNotFound as e:
+            self._notify_about_instance_usage(context, instance, 'create.end',
+                    extra_usage_info={'message': e.format_message()})
             raise
         except exception.UnexpectedTaskStateError as e:
-            raise exception.BuildAbortException(instance_uuid=instance['uuid'],
-                    reason=e.format_message())
+            with excutils.save_and_reraise_exception():
+                msg = e.format_message()
+                self._notify_about_instance_usage(context, instance,
+                        'create.end', extra_usage_info={'message': msg})
         except exception.ComputeResourcesUnavailable as e:
+            LOG.debug(e.format_message(), instance=instance)
+            self._notify_about_instance_usage(context, instance,
+                    'create.error',
+                    extra_usage_info={'message': e.format_message()})
             raise exception.RescheduledException(
                     instance_uuid=instance['uuid'], reason=e.format_message())
-        except exception.BuildAbortException:
-            raise
+        except exception.BuildAbortException as e:
+            with excutils.save_and_reraise_exception():
+                LOG.debug(e.format_message, instance=instance)
+                self._notify_about_instance_usage(context, instance,
+                        'create.end', extra_usage_info={'message':
+                                                        e.format_message()})
+        except (exception.VirtualInterfaceCreateException,
+                exception.VirtualInterfaceMacAddressException,
+                exception.FixedIpLimitExceeded,
+                exception.NoMoreNetworks):
+            LOG.exception('Failed to allocate network(s)', instance=instance)
+            msg = _('Failed to allocate the network(s), not rescheduling.')
+            raise exception.BuildAbortException(instance_uuid=instance['uuid'],
+                    reason=msg)
         except Exception as e:
+            self._notify_about_instance_usage(context, instance,
+                    'create.error',
+                    extra_usage_info={'message': str(e)})
             raise exception.RescheduledException(
                     instance_uuid=instance['uuid'], reason=str(e))
 
+        current_power_state = self._get_power_state(context, instance)
+        self._instance_update(context, instance['uuid'],
+                power_state=current_power_state, vm_state=vm_states.ACTIVE,
+                task_state=None, expected_task_state=task_states.SPAWNING,
+                launched_at=timeutils.utcnow())
+
     @contextlib.contextmanager
-    def _build_resources(self, context, instance, image, block_device_mapping):
+    def _build_resources(self, context, instance, requested_networks,
+            security_groups, image, block_device_mapping):
         resources = {}
 
         # Verify that all the BDMs have a device_name set and assign a
         # default to the ones missing it with the help of the driver.
         self._default_block_device_names(context, instance, image,
                 block_device_mapping)
+
+        try:
+            network_info = self._build_networks_for_instance(context, instance,
+                    requested_networks, security_groups)
+            resources['network_info'] = network_info
+        except Exception:
+            # Because this allocation is async any failures are likely to occur
+            # when the driver accesses network_info during spawn().
+            LOG.exception('Failed to allocate network(s)', instance=instance)
+            msg = _('Failed to allocate the network(s), not rescheduling.')
+            raise exception.BuildAbortException(instance_uuid=instance['uuid'],
+                    reason=msg)
+
+        self._instance_update(
+                context, instance['uuid'],
+                vm_state=vm_states.BUILDING,
+                task_state=task_states.BLOCK_DEVICE_MAPPING)
 
         try:
             block_device_info = self._prep_block_device(context, instance,
@@ -1625,6 +1749,9 @@ class ComputeManager(manager.SchedulerDependentManager):
         except Exception:
             with excutils.save_and_reraise_exception() as ctxt:
                 LOG.exception(_('Instance failed to spawn'), instance=instance)
+                # Make sure the async call finishes
+                if network_info is not None:
+                    network_info.wait(do_raise=False)
                 try:
                     self._cleanup_build_resources(context, instance,
                             block_device_mapping)
@@ -1635,8 +1762,17 @@ class ComputeManager(manager.SchedulerDependentManager):
                     raise exception.BuildAbortException(
                             instance_uuid=instance['uuid'], reason=msg)
 
+    def _cleanup_allocated_networks(self, context, instance,
+            requested_networks):
+        try:
+            self._deallocate_network(context, instance, requested_networks)
+        except Exception:
+            msg = _('Failed to deallocate networks')
+            LOG.exception(msg, instance=instance)
+
     def _cleanup_build_resources(self, context, instance,
             block_device_mapping):
+        # Don't clean up networks here in case we reschedule
         try:
             self._cleanup_volumes(context, instance['uuid'],
                     block_device_mapping)
@@ -1702,8 +1838,8 @@ class ComputeManager(manager.SchedulerDependentManager):
         # NOTE(melwitt): attempt driver destroy before releasing ip, may
         #                want to keep ip allocated for certain failures
         try:
-            self.driver.destroy(instance, network_info, block_device_info,
-                                context=context)
+            self.driver.destroy(context, instance, network_info,
+                    block_device_info)
         except exception.InstancePowerOffFailure:
             # if the instance can't power off, don't release the ip
             with excutils.save_and_reraise_exception():
@@ -1802,8 +1938,10 @@ class ComputeManager(manager.SchedulerDependentManager):
             instance.terminated_at = timeutils.utcnow()
             instance.save()
             system_meta = utils.instance_sys_meta(instance)
-            self.conductor_api.instance_destroy(
+            db_inst = self.conductor_api.instance_destroy(
                 context, obj_base.obj_to_primitive(instance))
+            instance = instance_obj.Instance._from_db_object(context, instance,
+                                                             db_inst)
         except Exception:
             with excutils.save_and_reraise_exception():
                 self._quota_rollback(context, reservations,
@@ -2086,7 +2224,7 @@ class ComputeManager(manager.SchedulerDependentManager):
                 block_device_info = \
                         self._get_instance_volume_block_device_info(
                                 context, instance)
-                self.driver.destroy(instance,
+                self.driver.destroy(context, instance,
                                     network_info,
                                     block_device_info=block_device_info)
 
@@ -2242,57 +2380,6 @@ class ComputeManager(manager.SchedulerDependentManager):
                      context=context, instance=instance)
 
         self._notify_about_instance_usage(context, instance, "reboot.end")
-
-    @wrap_exception()
-    @reverts_task_state
-    @wrap_instance_fault
-    @delete_image_on_error
-    def live_snapshot_instance(self, context, image_id, instance):
-        """Live snapshot an instance on this host.
-
-        :param context: security context
-        :param image_id: glance.db.sqlalchemy.models.Image.Id
-        :param instance: an Instance dict
-        """
-        context = context.elevated()
-
-        current_power_state = self._get_power_state(context, instance)
-        instance = self._instance_update(context, instance['uuid'],
-                power_state=current_power_state)
-
-        LOG.audit(_('instance live snapshotting'), context=context,
-                  instance=instance)
-
-        if instance['power_state'] != power_state.RUNNING:
-            state = instance['power_state']
-            running = power_state.RUNNING
-            LOG.warn(_('trying to snapshot a non-running '
-                       'instance: (state: %(state)s '
-                       'expected: %(running)s)') %
-                     {'state': state, 'running': running},
-                     instance=instance)
-
-        self._notify_about_instance_usage(
-                context, instance, "live_snapshot.start")
-
-        expected_task_state = task_states.IMAGE_LIVE_SNAPSHOT
-
-        def update_task_state(task_state, expected_state=expected_task_state):
-            return self._instance_update(context, instance['uuid'],
-                    task_state=task_state,
-                    expected_task_state=expected_state)
-
-        self.driver.live_snapshot(context, instance, image_id,
-                                  update_task_state)
-        # The instance could have changed from the driver.  But since
-        # we're doing a fresh update here, we'll grab the changes.
-
-        instance = self._instance_update(context, instance['uuid'],
-                task_state=None,
-                expected_task_state=task_states.IMAGE_UPLOADING)
-
-        self._notify_about_instance_usage(
-                context, instance, "live_snapshot.end")
 
     @wrap_exception()
     @reverts_task_state
@@ -2809,7 +2896,7 @@ class ComputeManager(manager.SchedulerDependentManager):
             block_device_info = self._get_instance_volume_block_device_info(
                                 context, instance)
 
-            self.driver.destroy(instance, network_info,
+            self.driver.destroy(context, instance, network_info,
                                 block_device_info)
 
             self._terminate_volume_connections(context, instance)
@@ -3446,7 +3533,7 @@ class ComputeManager(manager.SchedulerDependentManager):
         network_info = self._get_instance_nw_info(context, instance)
         block_device_info = self._get_instance_volume_block_device_info(
                 context, instance)
-        self.driver.destroy(instance, network_info,
+        self.driver.destroy(context, instance, network_info,
                 block_device_info)
 
         instance.power_state = current_power_state
@@ -3491,7 +3578,7 @@ class ComputeManager(manager.SchedulerDependentManager):
 
     def _unshelve_instance(self, context, instance, image):
         self._notify_about_instance_usage(context, instance, 'unshelve.start')
-        compute_info = self._get_compute_info(context, self.host)
+        compute_info = self._get_compute_info(context.elevated(), self.host)
         instance.task_state = task_states.SPAWNING
         instance.node = compute_info['hypervisor_hostname']
         instance.host = self.host
@@ -3499,7 +3586,7 @@ class ComputeManager(manager.SchedulerDependentManager):
 
         network_info = self._get_instance_nw_info(context, instance)
         bdms = self.conductor_api.block_device_mapping_get_all_by_instance(
-                context, instance)
+                context, instance, legacy=False)
         block_device_info = self._prep_block_device(context, instance, bdms)
         scrubbed_keys = self._unshelve_instance_key_scrub(instance)
         try:
@@ -3716,8 +3803,9 @@ class ComputeManager(manager.SchedulerDependentManager):
         if 'serial' not in connection_info:
             connection_info['serial'] = volume_id
 
-        encryption = encryptors.get_encryption_metadata(context, volume_id,
-                                                        connection_info)
+        encryption = encryptors.get_encryption_metadata(
+            context, self.volume_api, volume_id, connection_info)
+
         try:
             self.driver.attach_volume(context,
                                       connection_info,
@@ -3774,8 +3862,9 @@ class ComputeManager(manager.SchedulerDependentManager):
                 LOG.warn(_('Detaching volume from unknown instance'),
                          context=context, instance=instance)
 
-            encryption = encryptors.get_encryption_metadata(context, volume_id,
-                                                            connection_info)
+            encryption = encryptors.get_encryption_metadata(
+                context, self.volume_api, volume_id, connection_info)
+
             self.driver.detach_volume(connection_info,
                                       instance,
                                       mp,
@@ -4185,7 +4274,7 @@ class ComputeManager(manager.SchedulerDependentManager):
         if migrate_data:
             is_shared_storage = migrate_data.get('is_shared_storage', True)
         if block_migration or not is_shared_storage:
-            self.driver.destroy(instance_ref, network_info)
+            self.driver.destroy(ctxt, instance_ref, network_info)
         else:
             # self.driver.destroy() usually performs  vif unplugging
             # but we must do it explicitly here when block_migration
@@ -4342,7 +4431,7 @@ class ComputeManager(manager.SchedulerDependentManager):
         #             from remote volumes if necessary
         block_device_info = self._get_instance_volume_block_device_info(
                             context, instance)
-        self.driver.destroy(instance, network_info, block_device_info)
+        self.driver.destroy(context, instance, network_info, block_device_info)
         self._notify_about_instance_usage(
                         context, instance, "live_migration.rollback.dest.end",
                         network_info=network_info)

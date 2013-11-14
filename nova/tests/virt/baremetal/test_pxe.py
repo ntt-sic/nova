@@ -498,7 +498,7 @@ class PXEPublicMethodsTestCase(BareMetalPXETestCase):
         self.driver.virtapi.instance_type_get(
             self.context, self.instance['instance_type_id']).AndReturn({})
         pxe.get_tftp_image_info(self.instance, {}).AndReturn(image_info)
-        pxe.get_partition_sizes(self.instance).AndReturn((0, 0))
+        pxe.get_partition_sizes(self.instance).AndReturn((0, 0, 0))
         bm_utils.random_alnum(32).AndReturn('alnum')
         pxe.build_pxe_config(
                 self.node['id'], 'alnum', iqn,
@@ -559,17 +559,17 @@ class PXEPublicMethodsTestCase(BareMetalPXETestCase):
         # activate and deactivate the bootloader
         # and check the deployment task_state in the database
         row = db.bm_node_get(self.context, 1)
-        self.assertTrue(row['deploy_key'] is None)
+        self.assertIsNone(row['deploy_key'])
 
         self.driver.activate_bootloader(self.context, self.node, self.instance,
                                         network_info=self.test_network_info)
         row = db.bm_node_get(self.context, 1)
-        self.assertTrue(row['deploy_key'] is not None)
+        self.assertIsNotNone(row['deploy_key'])
 
         self.driver.deactivate_bootloader(self.context, self.node,
                                             self.instance)
         row = db.bm_node_get(self.context, 1)
-        self.assertTrue(row['deploy_key'] is None)
+        self.assertIsNone(row['deploy_key'])
 
         self.mox.VerifyAll()
 

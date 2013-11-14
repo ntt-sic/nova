@@ -129,11 +129,6 @@ class FakeDriver(driver.ComputeDriver):
         fake_instance = FakeInstance(name, state)
         self.instances[name] = fake_instance
 
-    def live_snapshot(self, context, instance, name, update_task_state):
-        if instance['name'] not in self.instances:
-            raise exception.InstanceNotRunning(instance_id=instance['uuid'])
-        update_task_state(task_state=task_states.IMAGE_UPLOADING)
-
     def snapshot(self, context, instance, name, update_task_state):
         if instance['name'] not in self.instances:
             raise exception.InstanceNotRunning(instance_id=instance['uuid'])
@@ -206,8 +201,8 @@ class FakeDriver(driver.ComputeDriver):
     def resume(self, instance, network_info, block_device_info=None):
         pass
 
-    def destroy(self, instance, network_info, block_device_info=None,
-                destroy_disks=True, context=None):
+    def destroy(self, context, instance, network_info, block_device_info=None,
+                destroy_disks=True):
         key = instance['name']
         if key in self.instances:
             del self.instances[key]
@@ -457,14 +452,6 @@ class FakeVirtAPI(virtapi.VirtAPI):
                                                    instance_uuid,
                                                    updates)
 
-    def security_group_get_by_instance(self, context, instance):
-        return db.security_group_get_by_instance(context, instance['uuid'])
-
-    def security_group_rule_get_by_security_group(self, context,
-                                                  security_group):
-        return db.security_group_rule_get_by_security_group(
-            context, security_group['id'])
-
     def provider_fw_rule_get_all(self, context):
         return db.provider_fw_rule_get_all(context)
 
@@ -473,7 +460,7 @@ class FakeVirtAPI(virtapi.VirtAPI):
                                             hypervisor, os, architecture)
 
     def instance_type_get(self, context, instance_type_id):
-        return db.instance_type_get(context, instance_type_id)
+        return db.flavor_get(context, instance_type_id)
 
     def block_device_mapping_get_all_by_instance(self, context, instance,
                                                  legacy=True):

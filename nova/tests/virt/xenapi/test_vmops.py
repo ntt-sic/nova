@@ -24,6 +24,7 @@ from nova import exception
 from nova import test
 from nova.tests.virt.xenapi import stubs
 from nova.virt import fake
+from nova.virt.xenapi import agent as xenapi_agent
 from nova.virt.xenapi import driver as xenapi_conn
 from nova.virt.xenapi import fake as xenapi_fake
 from nova.virt.xenapi import vm_utils
@@ -293,7 +294,8 @@ class SpawnTestCase(VMOpsTestBase):
         self.vmops._ensure_instance_name_unique(name_label)
         self.vmops._ensure_enough_free_mem(instance)
         self.vmops._create_vm_record(context, instance, name_label,
-                di_type, kernel_file, ramdisk_file).AndReturn(vm_ref)
+                di_type, kernel_file,
+                ramdisk_file, image_meta).AndReturn(vm_ref)
         step += 1
         self.vmops._update_instance_progress(context, instance, step, steps)
 
@@ -399,7 +401,8 @@ class SpawnTestCase(VMOpsTestBase):
 
         vm_ref = "fake_vm_ref"
         self.vmops._create_vm_record(context, instance, name_label,
-                di_type, kernel_file, ramdisk_file).AndReturn(vm_ref)
+                di_type, kernel_file,
+                ramdisk_file, image_meta).AndReturn(vm_ref)
 
         if resize_instance:
             self.vmops._resize_up_root_vdi(instance, root_vdi)
@@ -551,6 +554,30 @@ class SpawnTestCase(VMOpsTestBase):
 
         self.mox.ReplayAll()
         self.vmops._attach_orig_disk_for_rescue(instance, vm_ref)
+
+    def test_agent_update_setup(self):
+        # agent updates need to occur after networking is configured
+        instance = {'name': 'betelgeuse',
+                    'uuid': '1-2-3-4-5-6'}
+        vm_ref = 'vm_ref'
+        agent = xenapi_agent.XenAPIBasedAgent(self.vmops._session,
+                self.vmops._virtapi, instance, vm_ref)
+
+        self.mox.StubOutWithMock(xenapi_agent, 'should_use_agent')
+        self.mox.StubOutWithMock(self.vmops, '_get_agent')
+        self.mox.StubOutWithMock(agent, 'get_version')
+        self.mox.StubOutWithMock(agent, 'resetnetwork')
+        self.mox.StubOutWithMock(agent, 'update_if_needed')
+
+        xenapi_agent.should_use_agent(instance).AndReturn(True)
+        self.vmops._get_agent(instance, vm_ref).AndReturn(agent)
+        agent.get_version().AndReturn('1.2.3')
+        agent.resetnetwork()
+        agent.update_if_needed('1.2.3')
+
+        self.mox.ReplayAll()
+        self.vmops._configure_new_instance_with_agent(instance, vm_ref,
+                None, None)
 
 
 @mock.patch.object(vmops.VMOps, '_update_instance_progress')
@@ -721,3 +748,31 @@ class MigrateDiskResizingUpTestCase(VMOpsTestBase):
         mock_restore.assert_called_once_with(instance)
         mock_migrate_vhd.assert_called_once_with(self.vmops._session,
                 instance, "parent", dest, sr_path, 1)
+
+
+class CreateVMRecordTestCase(VMOpsTestBase):
+    @mock.patch.object(vm_utils, 'determine_vm_mode')
+    @mock.patch.object(vm_utils, 'get_vm_device_id')
+    @mock.patch.object(vm_utils, 'create_vm')
+    def test_create_vm_record_with_vm_device_id(self, mock_create_vm,
+            mock_get_vm_device_id, mock_determine_vm_mode):
+
+        context = "context"
+        instance = {"vm_mode": "vm_mode", "uuid": "uuid123"}
+        name_label = "dummy"
+        disk_image_type = "vhd"
+        kernel_file = "kernel"
+        ramdisk_file = "ram"
+        image_meta = "image_meta"
+        device_id = "0002"
+        session = "session"
+        self.vmops._session = session
+        mock_get_vm_device_id.return_value = device_id
+        mock_determine_vm_mode.return_value = "vm_mode"
+
+        self.vmops._create_vm_record(context, instance, name_label,
+            disk_image_type, kernel_file, ramdisk_file, image_meta)
+
+        vm_utils.get_vm_device_id.assert_called_with(session, image_meta)
+        mock_create_vm.assert_called_with(session, instance, name_label,
+            kernel_file, ramdisk_file, False, device_id)

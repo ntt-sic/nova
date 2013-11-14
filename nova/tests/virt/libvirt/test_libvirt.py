@@ -55,6 +55,7 @@ import nova.tests.image.fake
 from nova.tests import matchers
 from nova.tests.objects import test_pci_device
 from nova.tests.virt.libvirt import fake_libvirt_utils
+from nova import unit
 from nova import utils
 from nova import version
 from nova.virt.disk import api as disk
@@ -716,11 +717,11 @@ class LibvirtConnTestCase(test.TestCase):
                                     None, disk_info)
         self.assertEqual(cfg.acpi, True)
         self.assertEqual(cfg.apic, True)
-        self.assertEqual(cfg.memory, 1024 * 1024 * 2)
+        self.assertEqual(cfg.memory, 2 * unit.Mi)
         self.assertEqual(cfg.vcpus, 1)
         self.assertEqual(cfg.os_type, vm_mode.HVM)
         self.assertEqual(cfg.os_boot_dev, ["hd"])
-        self.assertEqual(cfg.os_root, None)
+        self.assertIsNone(cfg.os_root)
         self.assertEqual(len(cfg.devices), 7)
         self.assertEqual(type(cfg.devices[0]),
                          vconfig.LibvirtConfigGuestDisk)
@@ -777,11 +778,11 @@ class LibvirtConnTestCase(test.TestCase):
                                     _fake_network_info(self.stubs, 2),
                                     None, disk_info)
         self.assertEqual(cfg.acpi, True)
-        self.assertEqual(cfg.memory, 1024 * 1024 * 2)
+        self.assertEqual(cfg.memory, 2 * unit.Mi)
         self.assertEqual(cfg.vcpus, 1)
         self.assertEqual(cfg.os_type, vm_mode.HVM)
         self.assertEqual(cfg.os_boot_dev, ["hd"])
-        self.assertEqual(cfg.os_root, None)
+        self.assertIsNone(cfg.os_root)
         self.assertEqual(len(cfg.devices), 8)
         self.assertEqual(type(cfg.devices[0]),
                          vconfig.LibvirtConfigGuestDisk)
@@ -835,7 +836,7 @@ class LibvirtConnTestCase(test.TestCase):
         cfg = conn.get_guest_config(instance_ref, [], None, disk_info,
                                     None, block_device_info)
         self.assertEqual(cfg.acpi, False)
-        self.assertEqual(cfg.memory, 1024 * 1024 * 2)
+        self.assertEqual(cfg.memory, 2 * unit.Mi)
         self.assertEqual(cfg.vcpus, 1)
         self.assertEqual(cfg.os_type, "uml")
         self.assertEqual(cfg.os_boot_dev, [])
@@ -1206,7 +1207,7 @@ class LibvirtConnTestCase(test.TestCase):
         conf = conn.get_guest_config(instance_ref,
                                      _fake_network_info(self.stubs, 1),
                                      None, disk_info)
-        self.assertEqual(conf.cpu, None)
+        self.assertIsNone(conf.cpu)
 
     def test_get_guest_cpu_config_default_kvm(self):
         self.flags(libvirt_type="kvm",
@@ -1229,7 +1230,7 @@ class LibvirtConnTestCase(test.TestCase):
         self.assertEqual(type(conf.cpu),
                          vconfig.LibvirtConfigGuestCPU)
         self.assertEqual(conf.cpu.mode, "host-model")
-        self.assertEqual(conf.cpu.model, None)
+        self.assertIsNone(conf.cpu.model)
 
     def test_get_guest_cpu_config_default_uml(self):
         self.flags(libvirt_type="uml",
@@ -1243,7 +1244,7 @@ class LibvirtConnTestCase(test.TestCase):
         conf = conn.get_guest_config(instance_ref,
                                      _fake_network_info(self.stubs, 1),
                                      None, disk_info)
-        self.assertEqual(conf.cpu, None)
+        self.assertIsNone(conf.cpu)
 
     def test_get_guest_cpu_config_default_lxc(self):
         self.flags(libvirt_type="lxc",
@@ -1257,7 +1258,7 @@ class LibvirtConnTestCase(test.TestCase):
         conf = conn.get_guest_config(instance_ref,
                                      _fake_network_info(self.stubs, 1),
                                      None, disk_info)
-        self.assertEqual(conf.cpu, None)
+        self.assertIsNone(conf.cpu)
 
     def test_get_guest_cpu_config_host_passthrough_new(self):
         def get_lib_version_stub():
@@ -1278,7 +1279,7 @@ class LibvirtConnTestCase(test.TestCase):
         self.assertEqual(type(conf.cpu),
                          vconfig.LibvirtConfigGuestCPU)
         self.assertEqual(conf.cpu.mode, "host-passthrough")
-        self.assertEqual(conf.cpu.model, None)
+        self.assertIsNone(conf.cpu.model)
 
     def test_get_guest_cpu_config_host_model_new(self):
         def get_lib_version_stub():
@@ -1299,7 +1300,7 @@ class LibvirtConnTestCase(test.TestCase):
         self.assertEqual(type(conf.cpu),
                          vconfig.LibvirtConfigGuestCPU)
         self.assertEqual(conf.cpu.mode, "host-model")
-        self.assertEqual(conf.cpu.model, None)
+        self.assertIsNone(conf.cpu.model)
 
     def test_get_guest_cpu_config_custom_new(self):
         def get_lib_version_stub():
@@ -1378,7 +1379,7 @@ class LibvirtConnTestCase(test.TestCase):
                                      None, disk_info)
         self.assertEqual(type(conf.cpu),
                          vconfig.LibvirtConfigGuestCPU)
-        self.assertEqual(conf.cpu.mode, None)
+        self.assertIsNone(conf.cpu.mode)
         self.assertEqual(conf.cpu.model, "Opteron_G4")
         self.assertEqual(conf.cpu.vendor, "AMD")
         self.assertEqual(len(conf.cpu.features), 2)
@@ -1404,7 +1405,7 @@ class LibvirtConnTestCase(test.TestCase):
                                      None, disk_info)
         self.assertEqual(type(conf.cpu),
                          vconfig.LibvirtConfigGuestCPU)
-        self.assertEqual(conf.cpu.mode, None)
+        self.assertIsNone(conf.cpu.mode)
         self.assertEqual(conf.cpu.model, "Penryn")
 
     def test_xml_and_uri_no_ramdisk_no_kernel(self):
@@ -3162,7 +3163,7 @@ class LibvirtConnTestCase(test.TestCase):
 
         self.mox.ReplayAll()
         result = conn.pre_live_migration(c, inst_ref, vol, nw_info, None)
-        self.assertEqual(result, None)
+        self.assertIsNone(result)
 
     def test_pre_live_migration_vol_backed_works_correctly_mocked(self):
         # Creating testdata, using temp dir.
@@ -3205,7 +3206,7 @@ class LibvirtConnTestCase(test.TestCase):
                             }
             ret = conn.pre_live_migration(c, inst_ref, vol, nw_info, None,
                                           migrate_data)
-            self.assertEqual(ret, None)
+            self.assertIsNone(ret)
             self.assertTrue(os.path.exists('%s/%s/' % (tmpdir,
                                                        inst_ref['name'])))
         db.instance_destroy(self.context, inst_ref['uuid'])
@@ -3264,9 +3265,8 @@ class LibvirtConnTestCase(test.TestCase):
                 return vdmock
         self.create_fake_libvirt_mock(lookupByName=fake_lookup)
 
-        GB = 1024 * 1024 * 1024
-        fake_libvirt_utils.disk_sizes['/test/disk'] = 10 * GB
-        fake_libvirt_utils.disk_sizes['/test/disk.local'] = 20 * GB
+        fake_libvirt_utils.disk_sizes['/test/disk'] = 10 * unit.Gi
+        fake_libvirt_utils.disk_sizes['/test/disk.local'] = 20 * unit.Gi
         fake_libvirt_utils.disk_backing_files['/test/disk.local'] = 'file'
 
         self.mox.StubOutWithMock(os.path, "getsize")
@@ -3358,9 +3358,8 @@ class LibvirtConnTestCase(test.TestCase):
                 return vdmock
         self.create_fake_libvirt_mock(lookupByName=fake_lookup)
 
-        GB = 1024 * 1024 * 1024
-        fake_libvirt_utils.disk_sizes['/test/disk'] = 10 * GB
-        fake_libvirt_utils.disk_sizes['/test/disk.local'] = 20 * GB
+        fake_libvirt_utils.disk_sizes['/test/disk'] = 10 * unit.Gi
+        fake_libvirt_utils.disk_sizes['/test/disk.local'] = 20 * unit.Gi
         fake_libvirt_utils.disk_backing_files['/test/disk.local'] = 'file'
 
         self.mox.StubOutWithMock(os.path, "getsize")
@@ -3658,9 +3657,9 @@ class LibvirtConnTestCase(test.TestCase):
 
         wantFiles = [
             {'filename': '356a192b7913b04c54574d18c28d46e6395428ab',
-             'size': 10 * 1024 * 1024 * 1024},
+             'size': 10 * unit.Gi},
             {'filename': 'ephemeral_20_default',
-             'size': 20 * 1024 * 1024 * 1024},
+             'size': 20 * unit.Gi},
             ]
         self.assertEqual(gotFiles, wantFiles)
 
@@ -3720,11 +3719,11 @@ class LibvirtConnTestCase(test.TestCase):
 
         wantFiles = [
             {'filename': '356a192b7913b04c54574d18c28d46e6395428ab',
-             'size': 10 * 1024 * 1024 * 1024},
+             'size': 10 * unit.Gi},
             {'filename': 'ephemeral_20_default',
-             'size': 20 * 1024 * 1024 * 1024},
+             'size': 20 * unit.Gi},
             {'filename': 'swap_500',
-             'size': 500 * 1024 * 1024},
+             'size': 500 * unit.Mi},
             ]
         self.assertEqual(gotFiles, wantFiles)
 
@@ -3962,7 +3961,7 @@ class LibvirtConnTestCase(test.TestCase):
                        fake_delete_instance_files)
 
         instance = db.instance_create(self.context, self.test_instance)
-        conn.destroy(instance, {})
+        conn.destroy(self.context, instance, {})
 
     def test_destroy_removes_disk(self):
         instance = {"name": "instancename", "id": "42",
@@ -4019,7 +4018,7 @@ class LibvirtConnTestCase(test.TestCase):
                        fake_obj_load_attr)
         self.stubs.Set(instance_obj.Instance, 'save', fake_save)
 
-        conn.destroy(instance, [])
+        conn.destroy(self.context, instance, [])
 
     def test_destroy_not_removes_disk(self):
         instance = {"name": "instancename", "id": "instanceid",
@@ -4051,7 +4050,7 @@ class LibvirtConnTestCase(test.TestCase):
         self.stubs.Set(conn.firewall_driver,
                        'unfilter_instance', fake_unfilter_instance)
         self.stubs.Set(os.path, 'exists', fake_os_path_exists)
-        conn.destroy(instance, [], None, False)
+        conn.destroy(self.context, instance, [], None, False)
 
     def test_delete_instance_files(self):
         instance = {"name": "instancename", "id": "42",
@@ -4349,7 +4348,7 @@ class LibvirtConnTestCase(test.TestCase):
 
         instance = {"name": "instancename", "id": "instanceid",
                     "uuid": "875a8070-d0b9-4949-8b31-104d125c9a64"}
-        conn.destroy(instance, [])
+        conn.destroy(self.context, instance, [])
 
     def test_cleanup_rbd(self):
         mock = self.mox.CreateMock(libvirt.virDomain)
@@ -4409,7 +4408,7 @@ class LibvirtConnTestCase(test.TestCase):
                        fake_delete_instance_files)
         instance = {"name": "instancename", "id": "instanceid",
                     "uuid": "875a8070-d0b9-4949-8b31-104d125c9a64"}
-        conn.destroy(instance, [])
+        conn.destroy(self.context, instance, [])
 
     def test_destroy_undefines_no_attribute_with_managed_save(self):
         mock = self.mox.CreateMock(libvirt.virDomain)
@@ -4438,7 +4437,7 @@ class LibvirtConnTestCase(test.TestCase):
                        fake_delete_instance_files)
         instance = {"name": "instancename", "id": "instanceid",
                     "uuid": "875a8070-d0b9-4949-8b31-104d125c9a64"}
-        conn.destroy(instance, [])
+        conn.destroy(self.context, instance, [])
 
     def test_destroy_undefines_no_attribute_no_managed_save(self):
         mock = self.mox.CreateMock(libvirt.virDomain)
@@ -4466,7 +4465,7 @@ class LibvirtConnTestCase(test.TestCase):
                        fake_delete_instance_files)
         instance = {"name": "instancename", "id": "instanceid",
                     "uuid": "875a8070-d0b9-4949-8b31-104d125c9a64"}
-        conn.destroy(instance, [])
+        conn.destroy(self.context, instance, [])
 
     def test_destroy_timed_out(self):
         mock = self.mox.CreateMock(libvirt.virDomain)
@@ -4487,7 +4486,7 @@ class LibvirtConnTestCase(test.TestCase):
         instance = {"name": "instancename", "id": "instanceid",
                     "uuid": "875a8070-d0b9-4949-8b31-104d125c9a64"}
         self.assertRaises(exception.InstancePowerOffFailure,
-                conn.destroy, instance, [])
+                conn.destroy, self.context, instance, [])
 
     def test_private_destroy_not_found(self):
         mock = self.mox.CreateMock(libvirt.virDomain)
@@ -5226,7 +5225,7 @@ class LibvirtConnTestCase(test.TestCase):
 
         fake_conf.source_type = 'file'
         conn.set_cache_mode(fake_conf)
-        self.assertEqual(fake_conf.driver_cache, None)
+        self.assertIsNone(fake_conf.driver_cache)
 
     def test_set_cache_mode_invalid_object(self):
         self.flags(disk_cachemodes=['file=directsync'])
@@ -6526,7 +6525,8 @@ disk size: 4.4M''', ''))
         image_id = '4'
         user_id = 'fake'
         project_id = 'fake'
-        images.fetch_to_raw(context, image_id, target, user_id, project_id)
+        images.fetch_to_raw(context, image_id, target, user_id, project_id,
+                            max_size=0)
 
         self.mox.ReplayAll()
         libvirt_utils.fetch_image(context, target, image_id,
@@ -6556,20 +6556,27 @@ disk size: 4.4M''', ''))
                 file_format = path.split('.')[-2]
             elif file_format == 'converted':
                 file_format = 'raw'
+
             if 'backing' in path:
                 backing_file = 'backing'
             else:
                 backing_file = None
 
+            if 'big' in path:
+                virtual_size = 2
+            else:
+                virtual_size = 1
+
             FakeImgInfo.file_format = file_format
             FakeImgInfo.backing_file = backing_file
+            FakeImgInfo.virtual_size = virtual_size
 
             return FakeImgInfo()
 
         self.stubs.Set(utils, 'execute', fake_execute)
         self.stubs.Set(os, 'rename', fake_rename)
         self.stubs.Set(os, 'unlink', fake_unlink)
-        self.stubs.Set(images, 'fetch', lambda *_: None)
+        self.stubs.Set(images, 'fetch', lambda *_, **__: None)
         self.stubs.Set(images, 'qemu_img_info', fake_qemu_img_info)
         self.stubs.Set(fileutils, 'delete_if_exists', fake_rm_on_error)
 
@@ -6591,7 +6598,8 @@ disk size: 4.4M''', ''))
                               't.qcow2.part', 't.qcow2.converted'),
                              ('rm', 't.qcow2.part'),
                              ('mv', 't.qcow2.converted', 't.qcow2')]
-        images.fetch_to_raw(context, image_id, target, user_id, project_id)
+        images.fetch_to_raw(context, image_id, target, user_id, project_id,
+                            max_size=1)
         self.assertEqual(self.executes, expected_commands)
 
         target = 't.raw'
@@ -6606,6 +6614,15 @@ disk size: 4.4M''', ''))
         self.assertRaises(exception.ImageUnacceptable,
                           images.fetch_to_raw,
                           context, image_id, target, user_id, project_id)
+        self.assertEqual(self.executes, expected_commands)
+
+        target = 'big.qcow2'
+        self.executes = []
+        expected_commands = [('rm', '-f', 'big.qcow2.part')]
+        self.assertRaises(exception.InstanceTypeDiskTooSmall,
+                          images.fetch_to_raw,
+                          context, image_id, target, user_id, project_id,
+                          max_size=1)
         self.assertEqual(self.executes, expected_commands)
 
         del self.executes

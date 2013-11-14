@@ -124,6 +124,7 @@ class BareMetalDriverWithDBTestCase(bm_db_base.BMDBTestCase):
                 network_info=utils.get_test_network_info(),
             )
         result['destroy_params'] = dict(
+                context=self.context,
                 instance=result['instance'],
                 network_info=result['spawn_params']['network_info'],
                 block_device_info=result['spawn_params']['block_device_info'],
@@ -188,7 +189,7 @@ class BareMetalDriverWithDBTestCase(bm_db_base.BMDBTestCase):
                 self.driver.spawn, **node['spawn_params'])
 
         row = db.bm_node_get(self.context, node['node']['id'])
-        self.assertEqual(row['task_state'], None)
+        self.assertIsNone(row['task_state'])
 
     def test_spawn_node_in_use(self):
         node = self._create_node()
@@ -206,7 +207,7 @@ class BareMetalDriverWithDBTestCase(bm_db_base.BMDBTestCase):
                 self.driver.spawn, **node['spawn_params'])
 
         row = db.bm_node_get(self.context, node['node']['id'])
-        self.assertEqual(row['task_state'], None)
+        self.assertIsNone(row['task_state'])
 
     def test_spawn_fails(self):
         node = self._create_node()
@@ -244,8 +245,8 @@ class BareMetalDriverWithDBTestCase(bm_db_base.BMDBTestCase):
 
         row = db.bm_node_get(self.context, node['node']['id'])
         self.assertEqual(row['task_state'], baremetal_states.DELETED)
-        self.assertEqual(row['instance_uuid'], None)
-        self.assertEqual(row['instance_name'], None)
+        self.assertIsNone(row['instance_uuid'])
+        self.assertIsNone(row['instance_name'])
 
     def test_destroy_fails(self):
         node = self._create_node()

@@ -579,8 +579,8 @@ class TestNovaMigrations(BaseWalkMigrationTestCase, CommonTestsMixIn):
 
         if self.migration is None:
             self.migration = __import__('nova.db.migration',
-                    globals(), locals(), ['INIT_VERSION'], -1)
-            self.INIT_VERSION = self.migration.INIT_VERSION
+                    globals(), locals(), ['db_initial_version'], -1)
+            self.INIT_VERSION = self.migration.db_initial_version()
         if self.migration_api is None:
             temp = __import__('nova.db.sqlalchemy.migration',
                     globals(), locals(), ['versioning_api'], -1)
@@ -659,8 +659,8 @@ class TestNovaMigrations(BaseWalkMigrationTestCase, CommonTestsMixIn):
             bw_usage_cache.c.id == 1).execute().first()
 
         # New columns have 'NULL' as default value.
-        self.assertEqual(bw['last_ctr_in'], None)
-        self.assertEqual(bw['last_ctr_out'], None)
+        self.assertIsNone(bw['last_ctr_in'])
+        self.assertIsNone(bw['last_ctr_out'])
 
         self.assertEqual(data[0]['mac'], bw['mac'])
 
@@ -772,7 +772,7 @@ class TestNovaMigrations(BaseWalkMigrationTestCase, CommonTestsMixIn):
         host = aggregate_hosts.select(
             aggregate_hosts.c.aggregate_id == 3
             ).execute().first()
-        self.assertEqual(host, None)
+        self.assertIsNone(host)
 
         self._check_147_no_duplicate_aggregate_hosts(engine, data)
 
@@ -1213,7 +1213,7 @@ class TestNovaMigrations(BaseWalkMigrationTestCase, CommonTestsMixIn):
         results = list(results)
         self.assertEqual(len(our_ids), len(results))
         for result in results:
-            self.assertEqual(result['deleted'], None)
+            self.assertIsNone(result['deleted'])
         return data
 
     def _check_160(self, engine, data):
@@ -1294,7 +1294,7 @@ class TestNovaMigrations(BaseWalkMigrationTestCase, CommonTestsMixIn):
                 # been touched. Since we didn't set created_at on any
                 # of them, they should all still be None.
                 self.assertEqual(result['value'], original['value'])
-                self.assertEqual(result['created_at'], None)
+                self.assertIsNone(result['created_at'])
 
     def _pre_upgrade_172(self, engine):
         instance_types = db_utils.get_table(engine, 'instance_types')
@@ -1444,9 +1444,9 @@ class TestNovaMigrations(BaseWalkMigrationTestCase, CommonTestsMixIn):
         rows = volume_usage_cache.select().execute().fetchall()
         self.assertEqual(len(rows), 1)
 
-        self.assertEqual(rows[0]['instance_uuid'], None)
-        self.assertEqual(rows[0]['project_id'], None)
-        self.assertEqual(rows[0]['user_id'], None)
+        self.assertIsNone(rows[0]['instance_uuid'])
+        self.assertIsNone(rows[0]['project_id'])
+        self.assertIsNone(rows[0]['user_id'])
         self.assertNotIn('instance_id', rows[0])
 
     def _post_downgrade_175(self, engine):
@@ -1458,7 +1458,7 @@ class TestNovaMigrations(BaseWalkMigrationTestCase, CommonTestsMixIn):
         self.assertNotIn('instance_uuid', rows[0])
         self.assertNotIn('project_id', rows[0])
         self.assertNotIn('user_id', rows[0])
-        self.assertEqual(rows[0]['instance_id'], None)
+        self.assertIsNone(rows[0]['instance_id'])
 
     def _check_176(self, engine, data):
         volume_usage_cache = db_utils.get_table(engine, 'volume_usage_cache')
@@ -1466,7 +1466,7 @@ class TestNovaMigrations(BaseWalkMigrationTestCase, CommonTestsMixIn):
         rows = volume_usage_cache.select().execute().fetchall()
         self.assertEqual(len(rows), 1)
 
-        self.assertEqual(rows[0]['availability_zone'], None)
+        self.assertIsNone(rows[0]['availability_zone'])
 
     def _post_downgrade_176(self, engine):
         volume_usage_cache = db_utils.get_table(engine, 'volume_usage_cache')
@@ -1801,7 +1801,7 @@ class TestNovaMigrations(BaseWalkMigrationTestCase, CommonTestsMixIn):
                                     x['device_name'] + x['instance_uuid'])
         got_bdms = [bdm for bdm in q.execute()]
 
-        self.assertEquals(len(expected_bdms), len(got_bdms))
+        self.assertEqual(len(expected_bdms), len(got_bdms))
         for expected, got in zip(expected_bdms, got_bdms):
             self.assertThat(expected, matchers.IsSubDictOf(dict(got)))
 
@@ -1851,7 +1851,7 @@ class TestNovaMigrations(BaseWalkMigrationTestCase, CommonTestsMixIn):
     def _check_188(self, engine, data):
         services = db_utils.get_table(engine, 'services')
         rows = services.select().execute().fetchall()
-        self.assertEqual(rows[0]['disabled_reason'], None)
+        self.assertIsNone(rows[0]['disabled_reason'])
 
     def _post_downgrade_188(self, engine):
         services = db_utils.get_table(engine, 'services')
@@ -2633,8 +2633,8 @@ class TestNovaMigrations(BaseWalkMigrationTestCase, CommonTestsMixIn):
         self.assertEqual(quota['user_id'], 'fake_user')
         self.assertEqual(quota['resource'], 'instances')
         self.assertEqual(quota['hard_limit'], 10)
-        self.assertEqual(quota_usage['user_id'], None)
-        self.assertEqual(reservation['user_id'], None)
+        self.assertIsNone(quota_usage['user_id'])
+        self.assertIsNone(reservation['user_id'])
         # Check indexes exist
         if engine.name == 'mysql' or engine.name == 'postgresql':
             data = {
@@ -2776,7 +2776,7 @@ class TestNovaMigrations(BaseWalkMigrationTestCase, CommonTestsMixIn):
                 where(table.c.uuid.in_(['m205-uuid1', 'm205-uuid2'])).\
                 order_by(table.c.uuid).execute().fetchall()
             self.assertEqual(rows[0]['locked_by'], 'admin')
-            self.assertEqual(rows[1]['locked_by'], None)
+            self.assertIsNone(rows[1]['locked_by'])
 
     def _post_downgrade_205(self, engine):
         for table_name in ['instances', 'shadow_instances']:
@@ -3340,6 +3340,16 @@ class TestNovaMigrations(BaseWalkMigrationTestCase, CommonTestsMixIn):
         quota = table.select(table.c.id == 5).execute().first()
         self.assertEqual(quota['resource'], 'injected_file_content_bytes')
 
+    def _check_228(self, engine, data):
+        self.assertColumnExists(engine, 'compute_nodes', 'metrics')
+
+        compute_nodes = db_utils.get_table(engine, 'compute_nodes')
+        self.assertTrue(isinstance(compute_nodes.c.metrics.type,
+                            sqlalchemy.types.Text))
+
+    def _post_downgrade_228(self, engine):
+        self.assertColumnNotExists(engine, 'compute_nodes', 'metrics')
+
 
 class TestBaremetalMigrations(BaseWalkMigrationTestCase, CommonTestsMixIn):
     """Test sqlalchemy-migrate migrations."""
@@ -3367,8 +3377,8 @@ class TestBaremetalMigrations(BaseWalkMigrationTestCase, CommonTestsMixIn):
 
         if self.migration is None:
             self.migration = __import__('nova.virt.baremetal.db.migration',
-                    globals(), locals(), ['INIT_VERSION'], -1)
-            self.INIT_VERSION = self.migration.INIT_VERSION
+                    globals(), locals(), ['db_initial_version'], -1)
+            self.INIT_VERSION = self.migration.db_initial_version()
         if self.migration_api is None:
             temp = __import__('nova.virt.baremetal.db.sqlalchemy.migration',
                     globals(), locals(), ['versioning_api'], -1)

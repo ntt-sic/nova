@@ -62,6 +62,16 @@ get_engine = db_session.get_engine
 get_session = db_session.get_session
 
 
+def _reservation_get(context, uuid):
+    result = sqlalchemy_api.model_query(context, models.Reservation,
+            read_deleted="no").filter_by(uuid=uuid).first()
+
+    if not result:
+        raise exception.ReservationNotFound(uuid=uuid)
+
+    return result
+
+
 def _quota_reserve(context, project_id, user_id):
     """Create sample Quota, QuotaUsage and Reservation objects.
 
@@ -146,9 +156,9 @@ class DecoratorTestCase(test.TestCase):
 
         decorated_func = decorator(test_func)
 
-        self.assertEquals(test_func.func_name, decorated_func.func_name)
-        self.assertEquals(test_func.__doc__, decorated_func.__doc__)
-        self.assertEquals(test_func.__module__, decorated_func.__module__)
+        self.assertEqual(test_func.func_name, decorated_func.func_name)
+        self.assertEqual(test_func.__doc__, decorated_func.__doc__)
+        self.assertEqual(test_func.__module__, decorated_func.__module__)
 
     def test_require_context_decorator_wraps_functions_properly(self):
         self._test_decorator_wraps_helper(sqlalchemy_api.require_context)
@@ -245,7 +255,7 @@ class AggregateDBApiTestCase(test.TestCase):
 
     def test_aggregate_create_no_metadata(self):
         result = _create_aggregate(metadata=None)
-        self.assertEquals(result['name'], 'fake_aggregate')
+        self.assertEqual(result['name'], 'fake_aggregate')
 
     def test_aggregate_create_avoid_name_conflict(self):
         r1 = _create_aggregate(metadata=None)
@@ -574,7 +584,7 @@ class AggregateDBApiTestCase(test.TestCase):
         db.aggregate_metadata_delete(ctxt, result['id'], 'availability_zone')
         expected = db.aggregate_metadata_get(ctxt, result['id'])
         aggregate = db.aggregate_get(ctxt, result['id'])
-        self.assertEquals(aggregate['availability_zone'], None)
+        self.assertIsNone(aggregate['availability_zone'])
         self.assertThat({}, matchers.DictMatches(expected))
 
     def test_aggregate_metadata_delete_raise_not_found(self):
@@ -916,24 +926,6 @@ class ReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
                 'expire': timeutils.utcnow() + datetime.timedelta(days=1),
                 'usage': {'id': 1}}
 
-    def test_reservation_create(self):
-        reservation = db.reservation_create(self.ctxt, **self.values)
-        self._assertEqualObjects(self.values, reservation, ignored_keys=(
-                        'deleted', 'updated_at',
-                        'deleted_at', 'id',
-                        'created_at', 'usage',
-                        'usage_id'))
-        self.assertEqual(reservation['usage_id'], self.values['usage']['id'])
-
-    def test_reservation_get(self):
-        reservation = db.reservation_create(self.ctxt, **self.values)
-        reservation_db = db.reservation_get(self.ctxt, self.values['uuid'])
-        self._assertEqualObjects(reservation, reservation_db)
-
-    def test_reservation_get_nonexistent(self):
-        self.assertRaises(exception.ReservationNotFound, db.reservation_get,
-                                    self.ctxt, 'non-exitent-resevation-uuid')
-
     def test_reservation_commit(self):
         reservations = _quota_reserve(self.ctxt, 'project1', 'user1')
         expected = {'project_id': 'project1', 'user_id': 'user1',
@@ -942,10 +934,10 @@ class ReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
                 'fixed_ips': {'reserved': 2, 'in_use': 2}}
         self.assertEqual(expected, db.quota_usage_get_all_by_project_and_user(
                                             self.ctxt, 'project1', 'user1'))
-        db.reservation_get(self.ctxt, reservations[0])
+        _reservation_get(self.ctxt, reservations[0])
         db.reservation_commit(self.ctxt, reservations, 'project1', 'user1')
         self.assertRaises(exception.ReservationNotFound,
-            db.reservation_get, self.ctxt, reservations[0])
+            _reservation_get, self.ctxt, reservations[0])
         expected = {'project_id': 'project1', 'user_id': 'user1',
                 'resource0': {'reserved': 0, 'in_use': 0},
                 'resource1': {'reserved': 0, 'in_use': 2},
@@ -961,10 +953,10 @@ class ReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
                 'fixed_ips': {'reserved': 2, 'in_use': 2}}
         self.assertEqual(expected, db.quota_usage_get_all_by_project_and_user(
                                             self.ctxt, 'project1', 'user1'))
-        db.reservation_get(self.ctxt, reservations[0])
+        _reservation_get(self.ctxt, reservations[0])
         db.reservation_rollback(self.ctxt, reservations, 'project1', 'user1')
         self.assertRaises(exception.ReservationNotFound,
-            db.reservation_get, self.ctxt, reservations[0])
+            _reservation_get, self.ctxt, reservations[0])
         expected = {'project_id': 'project1', 'user_id': 'user1',
                 'resource0': {'reserved': 0, 'in_use': 0},
                 'resource1': {'reserved': 0, 'in_use': 1},
@@ -1137,7 +1129,7 @@ class SecurityGroupTestCase(test.TestCase, ModelsObjectComparatorMixin):
 
     def test_security_group_create(self):
         security_group = self._create_security_group({})
-        self.assertFalse(security_group['id'] is None)
+        self.assertIsNotNone(security_group['id'])
         for key, value in self._get_base_values().iteritems():
             self.assertEqual(value, security_group[key])
 
@@ -1280,10 +1272,10 @@ class SecurityGroupTestCase(test.TestCase, ModelsObjectComparatorMixin):
             real.append(in_use)
         expected = [True, False]
 
-        self.assertEquals(expected, real)
+        self.assertEqual(expected, real)
 
     def test_security_group_ensure_default(self):
-        self.assertEquals(0, len(db.security_group_get_by_project(
+        self.assertEqual(0, len(db.security_group_get_by_project(
                                     self.ctxt,
                                     self.ctxt.project_id)))
 
@@ -1293,8 +1285,8 @@ class SecurityGroupTestCase(test.TestCase, ModelsObjectComparatorMixin):
                             self.ctxt,
                             self.ctxt.project_id)
 
-        self.assertEquals(1, len(security_groups))
-        self.assertEquals("default", security_groups[0]["name"])
+        self.assertEqual(1, len(security_groups))
+        self.assertEqual("default", security_groups[0]["name"])
 
     def test_security_group_update(self):
         security_group = self._create_security_group({})
@@ -1442,7 +1434,7 @@ class InstanceTestCase(test.TestCase, ModelsObjectComparatorMixin):
         values = {'created_at': '2011-01-31T00:00:00.0'}
         actual = db.instance_update(self.ctxt, instance['uuid'], values)
         expected = datetime.datetime(2011, 1, 31)
-        self.assertEquals(expected, actual["created_at"])
+        self.assertEqual(expected, actual["created_at"])
 
     def test_create_instance_unique_hostname(self):
         context1 = context.RequestContext('user1', 'p1')
@@ -1966,7 +1958,7 @@ class ServiceTestCase(test.TestCase, ModelsObjectComparatorMixin):
 
     def test_service_create(self):
         service = self._create_service({})
-        self.assertFalse(service['id'] is None)
+        self.assertIsNotNone(service['id'])
         for key, value in self._get_base_values().iteritems():
             self.assertEqual(value, service[key])
 
@@ -2499,7 +2491,7 @@ class InstanceTypeTestCase(BaseInstanceTypeTestCase):
         ignored_keys = ['id', 'deleted', 'deleted_at', 'updated_at',
                         'created_at', 'extra_specs']
 
-        self.assertFalse(inst_type['id'] is None)
+        self.assertIsNotNone(inst_type['id'])
         self._assertEqualObjects(inst_type, self._get_base_values(),
                                  ignored_keys)
 
@@ -2793,7 +2785,7 @@ class InstanceTypeExtraSpecsTestCase(BaseInstanceTypeTestCase):
                                                              key)
                 self.assertEqual(spec[key], val)
 
-    def test_instance_type_extra_specs_delete(self):
+    def test_flavor_extra_specs_delete(self):
         for it in self.inst_types:
             specs = it['extra_specs']
             key = specs.keys()[0]
@@ -2803,7 +2795,7 @@ class InstanceTypeExtraSpecsTestCase(BaseInstanceTypeTestCase):
                                                           it['flavorid'])
             self._assertEqualObjects(it['extra_specs'], real_specs)
 
-    def test_instance_type_extra_specs_delete_failed(self):
+    def test_flavor_extra_specs_delete_failed(self):
         for it in self.inst_types:
             self.assertRaises(exception.InstanceTypeExtraSpecsNotFound,
                           db.flavor_extra_specs_delete,
@@ -2877,7 +2869,7 @@ class InstanceTypeAccessTestCase(BaseInstanceTypeTestCase):
         # NOTE(boris-42): Check that instance_type_access_add doesn't fail and
         #                 returns correct value. This is enough because other
         #                 logic is checked by other methods.
-        self.assertFalse(access['id'] is None)
+        self.assertIsNotNone(access['id'])
         self.assertEqual(access['instance_type_id'], inst_type['id'])
         self.assertEqual(access['project_id'], project_id)
 
@@ -3034,8 +3026,8 @@ class FixedIPTestCase(BaseInstanceTypeTestCase):
 
         fip = db.fixed_ip_get_by_network_host(self.ctxt, 1, 'host')
 
-        self.assertEquals(1, fip['network_id'])
-        self.assertEquals('host', fip['host'])
+        self.assertEqual(1, fip['network_id'])
+        self.assertEqual('host', fip['host'])
 
     def _create_instance(self, **kwargs):
         instance = db.instance_create(self.ctxt, kwargs)
@@ -3155,7 +3147,7 @@ class FixedIPTestCase(BaseInstanceTypeTestCase):
             self.ctxt, dict(instance_uuid=instance_uuid))
 
         ips_list = db.fixed_ips_by_virtual_interface(self.ctxt, vif.id)
-        self.assertEquals(0, len(ips_list))
+        self.assertEqual(0, len(ips_list))
 
     def create_fixed_ip(self, **params):
         default_params = {'address': '192.168.0.1'}
@@ -3610,7 +3602,7 @@ class FloatingIpTestCase(test.TestCase, ModelsObjectComparatorMixin):
         ignored_keys = ['id', 'deleted', 'deleted_at', 'updated_at',
                         'created_at']
 
-        self.assertFalse(floating_ip['id'] is None)
+        self.assertIsNotNone(floating_ip['id'])
         self._assertEqualObjects(floating_ip, self._get_base_values(),
                                  ignored_keys)
 
@@ -3647,7 +3639,7 @@ class FloatingIpTestCase(test.TestCase, ModelsObjectComparatorMixin):
         result = db.floating_ip_fixed_ip_associate(self.ctxt,
                                                    float_addresses[0],
                                                    fixed_addresses[0], 'host')
-        self.assertTrue(result is None)
+        self.assertIsNone(result)
 
     def test_floating_ip_fixed_ip_associate_float_ip_not_found(self):
         self.assertRaises(exception.FloatingIpNotFoundForAddress,
@@ -3660,8 +3652,8 @@ class FloatingIpTestCase(test.TestCase, ModelsObjectComparatorMixin):
         db.floating_ip_deallocate(self.ctxt, float_ip.address)
 
         updated_float_ip = db.floating_ip_get(self.ctxt, float_ip.id)
-        self.assertTrue(updated_float_ip.project_id is None)
-        self.assertTrue(updated_float_ip.host is None)
+        self.assertIsNone(updated_float_ip.project_id)
+        self.assertIsNone(updated_float_ip.host)
         self.assertFalse(updated_float_ip.auto_assigned)
 
     def test_floating_ip_destroy(self):
@@ -3700,8 +3692,8 @@ class FloatingIpTestCase(test.TestCase, ModelsObjectComparatorMixin):
             fixed = db.floating_ip_disassociate(self.ctxt, float_ip.address)
             self.assertEqual(fixed.address, fixed_addr)
             updated_float_ip = db.floating_ip_get(self.ctxt, float_ip.id)
-            self.assertTrue(updated_float_ip.fixed_ip_id is None)
-            self.assertTrue(updated_float_ip.host is None)
+            self.assertIsNone(updated_float_ip.fixed_ip_id)
+            self.assertIsNone(updated_float_ip.host)
 
     def test_floating_ip_disassociate_not_found(self):
         self.assertRaises(exception.FloatingIpNotFoundForAddress,
@@ -4064,7 +4056,7 @@ class VolumeUsageDBApiTestCase(test.TestCase):
                                'curr_write_bytes': 0,
                                'curr_last_refreshed': now2}
 
-        self.assertEquals(1, len(vol_usages))
+        self.assertEqual(1, len(vol_usages))
         for key, value in expected_vol_usages.items():
             self.assertEqual(vol_usages[0][key], value, key)
 
@@ -4267,7 +4259,7 @@ class BlockDeviceMappingTestCase(test.TestCase):
 
     def test_block_device_mapping_create(self):
         bdm = self._create_bdm({})
-        self.assertFalse(bdm is None)
+        self.assertIsNotNone(bdm)
 
     def test_block_device_mapping_update(self):
         bdm = self._create_bdm({})
@@ -4313,7 +4305,7 @@ class BlockDeviceMappingTestCase(test.TestCase):
         bdm_real = db.block_device_mapping_get_all_by_instance(self.ctxt, uuid)
         self.assertEqual(len(bdm_real), 2)
         bdm_real = bdm_real[1]
-        self.assertEqual(bdm_real['device_name'], None)
+        self.assertIsNone(bdm_real['device_name'])
 
         # check create multiple devices without device_name
         bdm2 = dict(values)
@@ -4322,7 +4314,7 @@ class BlockDeviceMappingTestCase(test.TestCase):
         bdm_real = db.block_device_mapping_get_all_by_instance(self.ctxt, uuid)
         self.assertEqual(len(bdm_real), 3)
         bdm_real = bdm_real[2]
-        self.assertEqual(bdm_real['device_name'], None)
+        self.assertIsNone(bdm_real['device_name'])
 
     def test_block_device_mapping_update_or_create_multiple_ephemeral(self):
         uuid = self.instance['uuid']
@@ -4532,7 +4524,7 @@ class VirtualInterfaceTestCase(test.TestCase, ModelsObjectComparatorMixin):
 
     def test_virtual_interface_create(self):
         vif = self._create_virt_interface({})
-        self.assertFalse(vif['id'] is None)
+        self.assertIsNotNone(vif['id'])
         ignored_keys = ['id', 'deleted', 'deleted_at', 'updated_at',
                         'created_at', 'uuid']
         self._assertEqualObjects(vif, self._get_base_values(), ignored_keys)
@@ -4891,7 +4883,7 @@ class KeyPairTestCase(test.TestCase, ModelsObjectComparatorMixin):
         }
         key_pair = self._create_key_pair(param)
 
-        self.assertTrue(key_pair['id'] is not None)
+        self.assertIsNotNone(key_pair['id'])
         ignored_keys = ['deleted', 'created_at', 'updated_at',
                         'deleted_at', 'id']
         self._assertEqualObjects(key_pair, param, ignored_keys)
@@ -5084,7 +5076,7 @@ class QuotaTestCase(test.TestCase, ModelsObjectComparatorMixin):
                                               None, None, 'project1')
         resources_names = reservable_resources.keys()
         for reservation_uuid in reservations_uuids:
-            reservation = db.reservation_get(self.ctxt, reservation_uuid)
+            reservation = _reservation_get(self.ctxt, reservation_uuid)
             usage = db.quota_usage_get(self.ctxt, 'project1',
                                        reservation.resource)
             self.assertEqual(usage.in_use, usages[reservation.resource],
@@ -5107,7 +5099,7 @@ class QuotaTestCase(test.TestCase, ModelsObjectComparatorMixin):
                             {'project_id': 'project1'})
         for r in reservations:
             self.assertRaises(exception.ReservationNotFound,
-                            db.reservation_get, self.ctxt, r)
+                            _reservation_get, self.ctxt, r)
 
     def test_quota_destroy_all_by_project_and_user(self):
         reservations = _quota_reserve(self.ctxt, 'project1', 'user1')
@@ -5124,7 +5116,7 @@ class QuotaTestCase(test.TestCase, ModelsObjectComparatorMixin):
                              'fixed_ips': {'in_use': 2, 'reserved': 2}})
         for r in reservations:
             self.assertRaises(exception.ReservationNotFound,
-                            db.reservation_get, self.ctxt, r)
+                            _reservation_get, self.ctxt, r)
 
     def test_quota_usage_get_nonexistent(self):
         self.assertRaises(exception.QuotaUsageNotFound, db.quota_usage_get,
@@ -5291,7 +5283,8 @@ class ComputeNodeTestCase(test.TestCase, ModelsObjectComparatorMixin):
                                  hypervisor_hostname='abracadabra104',
                                  host_ip='127.0.0.1',
                                  supported_instances='',
-                                 pci_stats='')
+                                 pci_stats='',
+                                 metrics='')
         # add some random stats
         self.stats = dict(num_instances=3, num_proj_12345=2,
                      num_proj_23456=2, num_vm_building=3)
@@ -5359,7 +5352,7 @@ class ComputeNodeTestCase(test.TestCase, ModelsObjectComparatorMixin):
                 if n['id'] == node['id']:
                     found = n
                     break
-            self.assertNotEqual(None, found)
+            self.assertIsNotNone(found)
             # Now ensure the match has stats!
             self.assertNotEqual(self._stats_as_dict(found['stats']), {})
 
@@ -5734,7 +5727,7 @@ class CellTestCase(test.TestCase, ModelsObjectComparatorMixin):
 
     def test_cell_create(self):
         cell = db.cell_create(self.ctxt, self._get_cell_base_values())
-        self.assertFalse(cell['id'] is None)
+        self.assertIsNotNone(cell['id'])
         self._assertEqualObjects(cell, self._get_cell_base_values(),
                                  ignored_keys=self._ignored_keys)
 
@@ -5829,7 +5822,7 @@ class ConsolePoolTestCase(test.TestCase, ModelsObjectComparatorMixin):
     def test_console_pool_create(self):
         console_pool = db.console_pool_create(
             self.ctxt, self.test_console_pool_1)
-        self.assertTrue(console_pool.get('id') is not None)
+        self.assertIsNotNone(console_pool.get('id'))
         ignored_keys = ['deleted', 'created_at', 'updated_at',
                         'deleted_at', 'id']
         self._assertEqualObjects(
@@ -6478,7 +6471,7 @@ class InstanceGroupDBApiTestCase(test.TestCase, ModelsObjectComparatorMixin):
         db.instance_group_update(self.context, result1['uuid'],
                                  values)
         result2 = db.instance_group_get(self.context, result1['uuid'])
-        self.assertEquals(result1['uuid'], result2['uuid'])
+        self.assertEqual(result1['uuid'], result2['uuid'])
         ignored_keys = ['id', 'uuid', 'deleted', 'deleted_at', 'updated_at',
                         'created_at']
         self._assertEqualObjects(result2, values, ignored_keys)
@@ -6505,11 +6498,11 @@ class InstanceGroupDBApiTestCase(test.TestCase, ModelsObjectComparatorMixin):
 
     def test_instance_group_get_all(self):
         groups = db.instance_group_get_all(self.context)
-        self.assertEquals(0, len(groups))
+        self.assertEqual(0, len(groups))
         value = self._get_default_values()
         result1 = self._create_instance_group(self.context, value)
         groups = db.instance_group_get_all(self.context)
-        self.assertEquals(1, len(groups))
+        self.assertEqual(1, len(groups))
         value = self._get_default_values()
         result2 = self._create_instance_group(self.context, value)
         groups = db.instance_group_get_all(self.context)
@@ -6519,12 +6512,12 @@ class InstanceGroupDBApiTestCase(test.TestCase, ModelsObjectComparatorMixin):
     def test_instance_group_get_all_by_project_id(self):
         groups = db.instance_group_get_all_by_project_id(self.context,
                                                          'invalid_project_id')
-        self.assertEquals(0, len(groups))
+        self.assertEqual(0, len(groups))
         values = self._get_default_values()
         result1 = self._create_instance_group(self.context, values)
         groups = db.instance_group_get_all_by_project_id(self.context,
                                                          'fake_project')
-        self.assertEquals(1, len(groups))
+        self.assertEqual(1, len(groups))
         values = self._get_default_values()
         values['project_id'] = 'new_project_id'
         result2 = self._create_instance_group(self.context, values)
@@ -6550,7 +6543,7 @@ class InstanceGroupDBApiTestCase(test.TestCase, ModelsObjectComparatorMixin):
         values['name'] = 'new_fake_name'
         db.instance_group_update(self.context, id, values)
         result = db.instance_group_get(self.context, id)
-        self.assertEquals(result['name'], 'new_fake_name')
+        self.assertEqual(result['name'], 'new_fake_name')
         # update metadata
         values = self._get_default_values()
         metadataInput = {'key11': 'value1',
@@ -6678,7 +6671,7 @@ class InstanceGroupMembersDBApiTestCase(InstanceGroupDBApiTestCase):
         result = self._create_instance_group(self.context, values)
         id = result['uuid']
         members = db.instance_group_members_get(self.context, id)
-        self.assertEquals(members, [])
+        self.assertEqual(members, [])
         members2 = ['instance_id1', 'instance_id2']
         db.instance_group_members_add(self.context, id, members2)
         members = db.instance_group_members_get(self.context, id)
@@ -6749,7 +6742,7 @@ class InstanceGroupPoliciesDBApiTestCase(InstanceGroupDBApiTestCase):
         result = self._create_instance_group(self.context, values)
         id = result['uuid']
         policies = db.instance_group_policies_get(self.context, id)
-        self.assertEquals(policies, [])
+        self.assertEqual(policies, [])
         policies2 = ['policy1', 'policy2']
         db.instance_group_policies_add(self.context, id, policies2)
         policies = db.instance_group_policies_get(self.context, id)

@@ -134,11 +134,14 @@ class _ComputeAPIUnitTestMixIn(object):
         self.mox.StubOutWithMock(quota.QUOTAS, "limit_check")
         self.mox.StubOutWithMock(quota.QUOTAS, "reserve")
 
-        quota_exception = exception.OverQuota(
-            quotas={'instances': 1, 'cores': 1, 'ram': 1},
-            usages=dict((r, {'in_use': 1, 'reserved': 1}) for r in
-                        ['instances', 'cores', 'ram']),
-            overs=['instances'])
+        quotas = {'instances': 1, 'cores': 1, 'ram': 1}
+        usages = dict((r, {'in_use': 1, 'reserved': 1}) for r in
+                    ['instances', 'cores', 'ram'])
+        headroom = dict((res, quotas[res] -
+                       (usages[res]['in_use'] + usages[res]['reserved']))
+                    for res in quotas.keys())
+        quota_exception = exception.OverQuota(quotas=quotas,
+            usages=usages, overs=['instances'], headroom=headroom)
 
         for _unused in range(2):
             self.compute_api._get_image(self.context, image_href).AndReturn(
@@ -164,7 +167,7 @@ class _ComputeAPIUnitTestMixIn(object):
         # Ensure instance can be suspended.
         instance = self._create_instance_obj()
         self.assertEqual(instance.vm_state, vm_states.ACTIVE)
-        self.assertEqual(instance.task_state, None)
+        self.assertIsNone(instance.task_state)
 
         self.mox.StubOutWithMock(instance, 'save')
         self.mox.StubOutWithMock(self.compute_api,
@@ -192,7 +195,7 @@ class _ComputeAPIUnitTestMixIn(object):
         instance = self._create_instance_obj(
                 params=dict(vm_state=vm_states.SUSPENDED))
         self.assertEqual(instance.vm_state, vm_states.SUSPENDED)
-        self.assertEqual(instance.task_state, None)
+        self.assertIsNone(instance.task_state)
 
         self.mox.StubOutWithMock(instance, 'save')
         self.mox.StubOutWithMock(self.compute_api,
@@ -1029,9 +1032,16 @@ class _ComputeAPIUnitTestMixIn(object):
                 self.context, fake_flavor,
                 current_flavor).AndReturn(deltas)
         usage = dict(in_use=0, reserved=0)
-        over_quota_args = dict(quotas={'resource': 0},
-                               usages={'resource': usage},
-                               overs=['resource'])
+        quotas = {'resource': 0}
+        usages = {'resource': usage}
+        overs = ['resource']
+        headroom = {'resource': quotas['resource'] -
+            (usages['resource']['in_use'] + usages['resource']['reserved'])}
+        over_quota_args = dict(quotas=quotas,
+                               usages=usages,
+                               overs=overs,
+                               headroom=headroom)
+
         self.compute_api._reserve_quota_delta(self.context, deltas,
                 project_id=fake_inst['project_id']).AndRaise(
                         exception.OverQuota(**over_quota_args))
@@ -1046,7 +1056,7 @@ class _ComputeAPIUnitTestMixIn(object):
         # Ensure instance can be paused.
         instance = self._create_instance_obj()
         self.assertEqual(instance.vm_state, vm_states.ACTIVE)
-        self.assertEqual(instance.task_state, None)
+        self.assertIsNone(instance.task_state)
 
         self.mox.StubOutWithMock(instance, 'save')
         self.mox.StubOutWithMock(self.compute_api,
@@ -1074,7 +1084,7 @@ class _ComputeAPIUnitTestMixIn(object):
         params = dict(vm_state=vm_states.PAUSED)
         instance = self._create_instance_obj(params=params)
         self.assertEqual(instance.vm_state, vm_states.PAUSED)
-        self.assertEqual(instance.task_state, None)
+        self.assertIsNone(instance.task_state)
 
         self.mox.StubOutWithMock(instance, 'save')
         self.mox.StubOutWithMock(self.compute_api,
@@ -1153,8 +1163,8 @@ class _ComputeAPIUnitTestMixIn(object):
         self.assertRaises(exception.VolumeUnattached,
                           self.compute_api.swap_volume, self.context, instance,
                           volumes[old_volume_id], volumes[new_volume_id])
-        self.assertEquals(volumes[old_volume_id]['status'], 'in-use')
-        self.assertEquals(volumes[new_volume_id]['status'], 'available')
+        self.assertEqual(volumes[old_volume_id]['status'], 'in-use')
+        self.assertEqual(volumes[new_volume_id]['status'], 'available')
         volumes[old_volume_id]['attach_status'] = 'attached'
 
         # Should fail if old volume's instance_uuid is not that of the instance
@@ -1162,8 +1172,8 @@ class _ComputeAPIUnitTestMixIn(object):
         self.assertRaises(exception.InvalidVolume,
                           self.compute_api.swap_volume, self.context, instance,
                           volumes[old_volume_id], volumes[new_volume_id])
-        self.assertEquals(volumes[old_volume_id]['status'], 'in-use')
-        self.assertEquals(volumes[new_volume_id]['status'], 'available')
+        self.assertEqual(volumes[old_volume_id]['status'], 'in-use')
+        self.assertEqual(volumes[new_volume_id]['status'], 'available')
         volumes[old_volume_id]['instance_uuid'] = 'fake'
 
         # Should fail if new volume is attached
@@ -1171,8 +1181,8 @@ class _ComputeAPIUnitTestMixIn(object):
         self.assertRaises(exception.InvalidVolume,
                           self.compute_api.swap_volume, self.context, instance,
                           volumes[old_volume_id], volumes[new_volume_id])
-        self.assertEquals(volumes[old_volume_id]['status'], 'in-use')
-        self.assertEquals(volumes[new_volume_id]['status'], 'available')
+        self.assertEqual(volumes[old_volume_id]['status'], 'in-use')
+        self.assertEqual(volumes[new_volume_id]['status'], 'available')
         volumes[new_volume_id]['attach_status'] = 'detached'
 
         # Should fail if new volume is smaller than the old volume
@@ -1180,8 +1190,8 @@ class _ComputeAPIUnitTestMixIn(object):
         self.assertRaises(exception.InvalidVolume,
                           self.compute_api.swap_volume, self.context, instance,
                           volumes[old_volume_id], volumes[new_volume_id])
-        self.assertEquals(volumes[old_volume_id]['status'], 'in-use')
-        self.assertEquals(volumes[new_volume_id]['status'], 'available')
+        self.assertEqual(volumes[old_volume_id]['status'], 'in-use')
+        self.assertEqual(volumes[new_volume_id]['status'], 'available')
         volumes[new_volume_id]['size'] = 5
 
         # Fail call to swap_volume
@@ -1198,8 +1208,8 @@ class _ComputeAPIUnitTestMixIn(object):
         self.assertRaises(AttributeError,
                           self.compute_api.swap_volume, self.context, instance,
                           volumes[old_volume_id], volumes[new_volume_id])
-        self.assertEquals(volumes[old_volume_id]['status'], 'in-use')
-        self.assertEquals(volumes[new_volume_id]['status'], 'available')
+        self.assertEqual(volumes[old_volume_id]['status'], 'in-use')
+        self.assertEqual(volumes[new_volume_id]['status'], 'available')
 
         # Should succeed
         self.stubs.Set(self.compute_api.compute_rpcapi, 'swap_volume',
@@ -1517,3 +1527,35 @@ class ComputeAPIComputeCellUnitTestCase(_ComputeAPIUnitTestMixIn,
 
     def test_resize_same_flavor_passes(self):
         self._test_resize(same_flavor=True)
+
+
+class DiffDictTestCase(test.NoDBTestCase):
+    """Unit tests for _diff_dict()."""
+
+    def test_no_change(self):
+        old = dict(a=1, b=2, c=3)
+        new = dict(a=1, b=2, c=3)
+        diff = compute_api._diff_dict(old, new)
+
+        self.assertEqual(diff, {})
+
+    def test_new_key(self):
+        old = dict(a=1, b=2, c=3)
+        new = dict(a=1, b=2, c=3, d=4)
+        diff = compute_api._diff_dict(old, new)
+
+        self.assertEqual(diff, dict(d=['+', 4]))
+
+    def test_changed_key(self):
+        old = dict(a=1, b=2, c=3)
+        new = dict(a=1, b=4, c=3)
+        diff = compute_api._diff_dict(old, new)
+
+        self.assertEqual(diff, dict(b=['+', 4]))
+
+    def test_removed_key(self):
+        old = dict(a=1, b=2, c=3)
+        new = dict(a=1, c=3)
+        diff = compute_api._diff_dict(old, new)
+
+        self.assertEqual(diff, dict(b=['-']))

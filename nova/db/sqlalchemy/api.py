@@ -2989,25 +2989,6 @@ def quota_usage_update(context, project_id, user_id, resource, **kwargs):
 ###################
 
 
-@require_context
-def reservation_get(context, uuid):
-    result = model_query(context, models.Reservation, read_deleted="no").\
-                     filter_by(uuid=uuid).\
-                     first()
-
-    if not result:
-        raise exception.ReservationNotFound(uuid=uuid)
-
-    return result
-
-
-@require_admin_context
-def reservation_create(context, uuid, usage, project_id, user_id, resource,
-                       delta, expire):
-    return _reservation_create(context, uuid, usage, project_id, user_id,
-                               resource, delta, expire)
-
-
 def _reservation_create(context, uuid, usage, project_id, user_id, resource,
                         delta, expire, session=None):
     reservation_ref = models.Reservation()
@@ -3248,8 +3229,29 @@ def quota_reserve(context, resources, project_quotas, user_quotas, deltas,
             usages = user_usages
         usages = dict((k, dict(in_use=v['in_use'], reserved=v['reserved']))
                       for k, v in usages.items())
+        headroom = dict((res, user_quotas[res] -
+                             (usages[res]['in_use'] + usages[res]['reserved']))
+                        for res in user_quotas.keys())
+
+        # If quota_cores is unlimited [-1]:
+        # - set cores headroom based on instances headroom:
+        if user_quotas.get('cores') == -1:
+            if deltas['cores']:
+                hc = headroom['instances'] * deltas['cores']
+                headroom['cores'] = hc / deltas['instances']
+            else:
+                headroom['cores'] = headroom['instances']
+
+        # If quota_ram is unlimited [-1]:
+        # - set ram headroom based on instances headroom:
+        if user_quotas.get('ram') == -1:
+            if deltas['ram']:
+                hr = headroom['instances'] * deltas['ram']
+                headroom['ram'] = hr / deltas['instances']
+            else:
+                headroom['ram'] = headroom['instances']
         raise exception.OverQuota(overs=sorted(overs), quotas=user_quotas,
-                                  usages=usages)
+                                  usages=usages, headroom=headroom)
 
     return reservations
 
@@ -5518,11 +5520,14 @@ def _get_default_deleted_value(table):
 @require_admin_context
 def archive_deleted_rows_for_table(context, tablename, max_rows):
     """Move up to max_rows rows from one tables to the corresponding
-    shadow table.
+    shadow table. The context argument is only used for the decorator.
 
     :returns: number of rows archived
     """
-    # The context argument is only used for the decorator.
+    # NOTE(guochbo): There is a circular import, nova.db.sqlalchemy.utils
+    # imports nova.db.sqlalchemy.api.
+    from nova.db.sqlalchemy import utils as db_utils
+
     engine = get_engine()
     conn = engine.connect()
     metadata = MetaData()
@@ -5536,38 +5541,41 @@ def archive_deleted_rows_for_table(context, tablename, max_rows):
     except NoSuchTableError:
         # No corresponding shadow table; skip it.
         return rows_archived
-    # Group the insert and delete in a transaction.
-    with conn.begin():
-        # TODO(dripton): It would be more efficient to insert(select) and then
-        # delete(same select) without ever returning the selected rows back to
-        # Python.  sqlalchemy does not support that directly, but we have
-        # nova.db.sqlalchemy.utils.InsertFromSelect for the insert side.  We
-        # need a corresponding function for the delete side.
-        try:
-            column = table.c.id
-            column_name = "id"
-        except AttributeError:
-            # We have one table (dns_domains) where the key is called
-            # "domain" rather than "id"
-            column = table.c.domain
-            column_name = "domain"
-        query = select([table],
-                       table.c.deleted != default_deleted_value).\
-                       order_by(column).limit(max_rows)
-        rows = conn.execute(query).fetchall()
-        if rows:
-            keys = [getattr(row, column_name) for row in rows]
-            delete_statement = table.delete(column.in_(keys))
-            try:
-                result = conn.execute(delete_statement)
-            except IntegrityError:
-                # A foreign key constraint keeps us from deleting some of
-                # these rows until we clean up a dependent table.  Just
-                # skip this table for now; we'll come back to it later.
-                return rows_archived
-            insert_statement = shadow_table.insert()
-            conn.execute(insert_statement, rows)
-            rows_archived = result.rowcount
+
+    if tablename == "dns_domains":
+        # We have one table (dns_domains) where the key is called
+        # "domain" rather than "id"
+        column = table.c.domain
+        column_name = "domain"
+    else:
+        column = table.c.id
+        column_name = "id"
+    # NOTE(guochbo): Use InsertFromSelect and DeleteFromSelect to avoid
+    # database's limit of maximum parameter in one SQL statment.
+    query_insert = select([table],
+                          table.c.deleted != default_deleted_value).\
+                          order_by(column).limit(max_rows)
+    query_delete = select([column],
+                          table.c.deleted != default_deleted_value).\
+                          order_by(column).limit(max_rows)
+
+    insert_statement = db_utils.InsertFromSelect(shadow_table, query_insert)
+    delete_statement = db_utils.DeleteFromSelect(table, query_delete, column)
+    try:
+        # Group the insert and delete in a transaction.
+        with conn.begin():
+            result_insert = conn.execute(insert_statement)
+            result_delete = conn.execute(delete_statement)
+    except IntegrityError:
+        # A foreign key constraint keeps us from deleting some of
+        # these rows until we clean up a dependent table.  Just
+        # skip this table for now; we'll come back to it later.
+        msg = _("IntegrityError detected when archiving table %s") % tablename
+        LOG.warn(msg)
+        return rows_archived
+
+    rows_archived = result_delete.rowcount
+
     return rows_archived
 
 

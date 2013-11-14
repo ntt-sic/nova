@@ -18,7 +18,6 @@
 
 """Unit tests for the API endpoint."""
 
-import pkg_resources
 import random
 import re
 import StringIO
@@ -43,6 +42,7 @@ from nova import block_device
 from nova import context
 from nova import exception
 from nova.openstack.common import timeutils
+from nova.openstack.common import versionutils
 from nova import test
 from nova.tests import matchers
 
@@ -102,7 +102,7 @@ class XmlConversionTestCase(test.TestCase):
     """Unit test api xml conversion."""
     def test_number_conversion(self):
         conv = ec2utils._try_convert
-        self.assertEqual(conv('None'), None)
+        self.assertIsNone(conv('None'))
         self.assertEqual(conv('True'), True)
         self.assertEqual(conv('TRUE'), True)
         self.assertEqual(conv('true'), True)
@@ -184,9 +184,9 @@ class Ec2utilsTestCase(test.TestCase):
             regex = ec2utils.regex_from_ec2_regex(ec2_regex)
             self.assertEqual(regex, expected)
             if match:
-                self.assertTrue(re.match(regex, literal) is not None)
+                self.assertIsNotNone(re.match(regex, literal))
             else:
-                self.assertTrue(re.match(regex, literal) is None)
+                self.assertIsNone(re.match(regex, literal))
 
         # wildcards
         _test_re('foo', '\Afoo\Z(?s)', 'foo')
@@ -273,11 +273,10 @@ class ApiEc2TestCase(test.TestCase):
         self.http = FakeHttplibConnection(
                 self.app, '%s:8773' % (self.host), False)
         # pylint: disable=E1103
-        boto_version = pkg_resources.parse_version(boto.Version)
-        if boto_version >= (2, 13):
+        if versionutils.is_compatible('2.14', boto.Version, same_major=False):
             self.ec2.new_http_connection(host or self.host, 8773,
                 is_secure).AndReturn(self.http)
-        elif boto_version >= (2,):
+        elif versionutils.is_compatible('2', boto.Version, same_major=False):
             self.ec2.new_http_connection(host or '%s:8773' % (self.host),
                 is_secure).AndReturn(self.http)
         else:
@@ -336,7 +335,7 @@ class ApiEc2TestCase(test.TestCase):
         self.ec2.create_key_pair(keyname)
         rv = self.ec2.get_all_key_pairs()
         results = [k for k in rv if k.name == keyname]
-        self.assertEquals(len(results), 1)
+        self.assertEqual(len(results), 1)
 
     def test_create_duplicate_key_pair(self):
         """Test that, after successfully generating a keypair,
@@ -363,8 +362,8 @@ class ApiEc2TestCase(test.TestCase):
 
         rv = self.ec2.get_all_security_groups()
 
-        self.assertEquals(len(rv), 1)
-        self.assertEquals(rv[0].name, 'default')
+        self.assertEqual(len(rv), 1)
+        self.assertEqual(rv[0].name, 'default')
 
     def test_create_delete_security_group(self):
         # Test that we can create a security group.
@@ -380,7 +379,7 @@ class ApiEc2TestCase(test.TestCase):
         self.mox.ReplayAll()
 
         rv = self.ec2.get_all_security_groups()
-        self.assertEquals(len(rv), 2)
+        self.assertEqual(len(rv), 2)
         self.assertIn(security_group_name, [group.name for group in rv])
 
         self.expect_http()
@@ -511,11 +510,11 @@ class ApiEc2TestCase(test.TestCase):
 
         group = [grp for grp in rv if grp.name == security_group_name][0]
 
-        self.assertEquals(len(group.rules), 8)
-        self.assertEquals(int(group.rules[0].from_port), 80)
-        self.assertEquals(int(group.rules[0].to_port), 81)
-        self.assertEquals(len(group.rules[0].grants), 1)
-        self.assertEquals(str(group.rules[0].grants[0]), '0.0.0.0/0')
+        self.assertEqual(len(group.rules), 8)
+        self.assertEqual(int(group.rules[0].from_port), 80)
+        self.assertEqual(int(group.rules[0].to_port), 81)
+        self.assertEqual(len(group.rules[0].grants), 1)
+        self.assertEqual(str(group.rules[0].grants[0]), '0.0.0.0/0')
 
         self.expect_http()
         self.mox.ReplayAll()
@@ -570,11 +569,11 @@ class ApiEc2TestCase(test.TestCase):
         rv = self.ec2.get_all_security_groups()
 
         group = [grp for grp in rv if grp.name == security_group_name][0]
-        self.assertEquals(len(group.rules), 1)
-        self.assertEquals(int(group.rules[0].from_port), 80)
-        self.assertEquals(int(group.rules[0].to_port), 81)
-        self.assertEquals(len(group.rules[0].grants), 1)
-        self.assertEquals(str(group.rules[0].grants[0]), '::/0')
+        self.assertEqual(len(group.rules), 1)
+        self.assertEqual(int(group.rules[0].from_port), 80)
+        self.assertEqual(int(group.rules[0].to_port), 81)
+        self.assertEqual(len(group.rules[0].grants), 1)
+        self.assertEqual(str(group.rules[0].grants[0]), '::/0')
 
         self.expect_http()
         self.mox.ReplayAll()
@@ -635,10 +634,10 @@ class ApiEc2TestCase(test.TestCase):
         # be good enough for that.
         for group in rv:
             if group.name == security_group_name:
-                self.assertEquals(len(group.rules), 3)
-                self.assertEquals(len(group.rules[0].grants), 1)
-                self.assertEquals(str(group.rules[0].grants[0]), '%s-%s' %
-                                  (other_security_group_name, 'fake'))
+                self.assertEqual(len(group.rules), 3)
+                self.assertEqual(len(group.rules[0].grants), 1)
+                self.assertEqual(str(group.rules[0].grants[0]),
+                                 '%s-%s' % (other_security_group_name, 'fake'))
 
         self.expect_http()
         self.mox.ReplayAll()

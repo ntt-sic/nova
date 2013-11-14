@@ -241,7 +241,7 @@ class ComputeDriver(object):
         """
         raise NotImplementedError()
 
-    def destroy(self, instance, network_info, block_device_info=None,
+    def destroy(self, context, instance, network_info, block_device_info=None,
                 destroy_disks=True):
         """Destroy (shutdown and delete) the specified instance.
 
@@ -249,15 +249,14 @@ class ComputeDriver(object):
         function should still succeed.  It's probably a good idea to log a
         warning in that case.
 
+        :param context: security context
         :param instance: Instance object as returned by DB layer.
         :param network_info:
            :py:meth:`~nova.network.manager.NetworkManager.get_instance_nw_info`
         :param block_device_info: Information about block devices that should
                                   be detached from the instance.
         :param destroy_disks: Indicates if disks should be destroyed
-
         """
-        # TODO(Vek): Need to pass context in for access to auth_token
         raise NotImplementedError()
 
     def reboot(self, context, instance, network_info, reboot_type,
@@ -349,17 +348,6 @@ class ComputeDriver(object):
         """
         Transfers the disk of a running instance in multiple phases, turning
         off the instance before the end.
-        """
-        raise NotImplementedError()
-
-    def live_snapshot(self, context, instance, image_id, update_task_state):
-        """
-        Live-snapshots the specified instance (includes ram and proc state).
-
-        :param context: security context
-        :param instance: Instance object as returned by DB layer.
-        :param image_id: Reference to a pre-created image that will
-                         hold the snapshot.
         """
         raise NotImplementedError()
 

@@ -187,6 +187,7 @@ class HostState(object):
         # overwrite any values, or get overwritten themselves. Store in self so
         # filters can schedule with them.
         self.stats = self._statmap(compute.get('stats', []))
+        self.hypervisor_version = compute['hypervisor_version']
 
         # Track number of instances on host
         self.num_instances = int(self.stats.get('num_instances', 0))
@@ -267,7 +268,7 @@ class HostState(object):
         if vm_state == vm_states.BUILDING or task_state in [
                 task_states.RESIZE_MIGRATING, task_states.REBUILDING,
                 task_states.RESIZE_PREP, task_states.IMAGE_SNAPSHOT,
-                task_states.IMAGE_LIVE_SNAPSHOT, task_states.IMAGE_BACKUP]:
+                task_states.IMAGE_BACKUP]:
             self.num_io_ops += 1
 
     def _statmap(self, stats):

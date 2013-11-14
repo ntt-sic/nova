@@ -406,6 +406,11 @@ class Instance(base.NovaPersistentObject, base.NovaObject):
 
         expected_attrs = [attr for attr in _INSTANCE_OPTIONAL_JOINED_FIELDS
                                if self.obj_attr_is_set(attr)]
+        # NOTE(alaski): We need to pull system_metadata for the
+        # notification.send_update() below.  If we don't there's a KeyError
+        # when it tries to extract the flavor.
+        if 'system_metadata' not in expected_attrs:
+            expected_attrs.append('system_metadata')
         old_ref, inst_ref = db.instance_update_and_get_original(
                 context, self.uuid, updates, update_cells=False,
                 columns_to_join=_expected_cols(expected_attrs))
@@ -543,7 +548,7 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
     def get_by_security_group_id(cls, context, security_group_id):
         db_secgroup = db.security_group_get(
             context, security_group_id,
-            columns_to_join=['instances', 'instances.info_cache',
+            columns_to_join=['instances.info_cache',
                              'instances.system_metadata'])
         return _make_instance_list(context, cls(), db_secgroup['instances'],
                                    ['info_cache', 'system_metadata'])
