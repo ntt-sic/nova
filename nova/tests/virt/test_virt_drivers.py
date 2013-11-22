@@ -21,6 +21,7 @@ import traceback
 
 from mock import MagicMock
 import netaddr
+import six
 
 from nova.compute import manager
 from nova import exception
@@ -97,7 +98,8 @@ class _FakeDriverBackendTestCase(object):
         self.flags(rescue_image_id="2",
                    rescue_kernel_id="3",
                    rescue_ramdisk_id=None,
-                   libvirt_snapshots_directory='./')
+                   snapshots_directory='./',
+                   group='libvirt')
 
         def fake_extend(image, size):
             pass
@@ -496,7 +498,7 @@ class _VirtDriverTestCase(_FakeDriverBackendTestCase):
         fake_libvirt_utils.files['dummy.log'] = ''
         instance_ref, network_info = self._get_running_instance()
         console_output = self.connection.get_console_output(instance_ref)
-        self.assertIsInstance(console_output, basestring)
+        self.assertIsInstance(console_output, six.string_types)
 
     @catch_notimplementederror
     def test_get_vnc_console(self):
@@ -701,7 +703,7 @@ class LibvirtConnTestCase(_VirtDriverTestCase, test.TestCase):
         return self.ctxt
 
     def test_force_hard_reboot(self):
-        self.flags(libvirt_wait_soft_reboot_seconds=0)
+        self.flags(wait_soft_reboot_seconds=0, group='libvirt')
         self.test_reboot()
 
     def test_migrate_disk_and_power_off(self):
@@ -714,7 +716,9 @@ class LibvirtConnTestCase(_VirtDriverTestCase, test.TestCase):
         service_mock = MagicMock()
 
         # Previous status of the service: disabled: False
-        service_mock.__getitem__.return_value = False
+        # service_mock.__getitem__.return_value = False
+        service_mock.configure_mock(disabled_reason='',
+                                    disabled=False)
         from nova.objects import service as service_obj
         self.mox.StubOutWithMock(service_obj.Service,
                                  'get_by_compute_host')
@@ -722,5 +726,56 @@ class LibvirtConnTestCase(_VirtDriverTestCase, test.TestCase):
                                     'fake-mini').AndReturn(service_mock)
         self.mox.ReplayAll()
         self.connection.set_host_enabled('my_test_host', 'ERROR!')
-        self.assertTrue(service_mock.disabled and
-                        service_mock.disabled_reason == 'ERROR!')
+        self.assertTrue(service_mock.disabled)
+        self.assertEqual(service_mock.disabled_reason, 'AUTO: ERROR!')
+
+    def test_set_host_enabled_when_auto_disabled(self):
+        self.mox.UnsetStubs()
+        service_mock = MagicMock()
+
+        # Previous status of the service: disabled: True, 'AUTO: ERROR'
+        service_mock.configure_mock(disabled_reason='AUTO: ERROR',
+                                    disabled=True)
+        from nova.objects import service as service_obj
+        self.mox.StubOutWithMock(service_obj.Service,
+                                 'get_by_compute_host')
+        service_obj.Service.get_by_compute_host(self.ctxt,
+                                    'fake-mini').AndReturn(service_mock)
+        self.mox.ReplayAll()
+        self.connection.set_host_enabled('my_test_host', True)
+        self.assertFalse(service_mock.disabled)
+        self.assertEqual(service_mock.disabled_reason, '')
+
+    def test_set_host_enabled_when_manually_disabled(self):
+        self.mox.UnsetStubs()
+        service_mock = MagicMock()
+
+        # Previous status of the service: disabled: True, 'Manually disabled'
+        service_mock.configure_mock(disabled_reason='Manually disabled',
+                                    disabled=True)
+        from nova.objects import service as service_obj
+        self.mox.StubOutWithMock(service_obj.Service,
+                                 'get_by_compute_host')
+        service_obj.Service.get_by_compute_host(self.ctxt,
+                                    'fake-mini').AndReturn(service_mock)
+        self.mox.ReplayAll()
+        self.connection.set_host_enabled('my_test_host', True)
+        self.assertTrue(service_mock.disabled)
+        self.assertEqual(service_mock.disabled_reason, 'Manually disabled')
+
+    def test_set_host_enabled_dont_override_manually_disabled(self):
+        self.mox.UnsetStubs()
+        service_mock = MagicMock()
+
+        # Previous status of the service: disabled: True, 'Manually disabled'
+        service_mock.configure_mock(disabled_reason='Manually disabled',
+                                    disabled=True)
+        from nova.objects import service as service_obj
+        self.mox.StubOutWithMock(service_obj.Service,
+                                 'get_by_compute_host')
+        service_obj.Service.get_by_compute_host(self.ctxt,
+                                    'fake-mini').AndReturn(service_mock)
+        self.mox.ReplayAll()
+        self.connection.set_host_enabled('my_test_host', 'ERROR!')
+        self.assertTrue(service_mock.disabled)
+        self.assertEqual(service_mock.disabled_reason, 'Manually disabled')

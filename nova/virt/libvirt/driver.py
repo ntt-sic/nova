@@ -27,11 +27,11 @@ Supports KVM, LXC, QEMU, UML, and XEN.
 
 **Related Flags**
 
-:libvirt_type:  Libvirt domain type.  Can be kvm, qemu, uml, xen
-                (default: kvm).
-:libvirt_uri:  Override for the default libvirt URI (depends on libvirt_type).
-:libvirt_disk_prefix:  Override the default disk prefix for the devices
-                       attached to a server.
+:driver_type:  Libvirt domain type.  Can be kvm, qemu, uml, xen (default: kvm).
+:connection_uri:  Override for the default libvirt URI (depends on
+                  driver_type).
+:disk_prefix:  Override the default disk prefix for the devices
+               attached to a server.
 :rescue_image_id:  Rescue ami image (None = original image).
 :rescue_kernel_id:  Rescue aki image (None = original image).
 :rescue_ramdisk_id:  Rescue ari image (None = original image).
@@ -113,57 +113,78 @@ LOG = logging.getLogger(__name__)
 
 libvirt_opts = [
     cfg.StrOpt('rescue_image_id',
-               help='Rescue ami image'),
+               help='Rescue ami image',
+               deprecated_group='DEFAULT'),
     cfg.StrOpt('rescue_kernel_id',
-               help='Rescue aki image'),
+               help='Rescue aki image',
+               deprecated_group='DEFAULT'),
     cfg.StrOpt('rescue_ramdisk_id',
-               help='Rescue ari image'),
-    cfg.StrOpt('libvirt_type',
+               help='Rescue ari image',
+               deprecated_group='DEFAULT'),
+    cfg.StrOpt('virt_type',
                default='kvm',
                help='Libvirt domain type (valid options are: '
-                    'kvm, lxc, qemu, uml, xen)'),
-    cfg.StrOpt('libvirt_uri',
+                    'kvm, lxc, qemu, uml, xen)',
+               deprecated_group='DEFAULT',
+               deprecated_name='libvirt_type'),
+    cfg.StrOpt('connection_uri',
                default='',
                help='Override the default libvirt URI '
-                    '(which is dependent on libvirt_type)'),
-    cfg.BoolOpt('libvirt_inject_password',
+                    '(which is dependent on virt_type)',
+               deprecated_group='DEFAULT',
+               deprecated_name='libvirt_uri'),
+    cfg.BoolOpt('inject_password',
                 default=False,
                 help='Inject the admin password at boot time, '
-                     'without an agent.'),
-    cfg.BoolOpt('libvirt_inject_key',
+                     'without an agent.',
+                deprecated_name='libvirt_inject_password',
+                deprecated_group='DEFAULT'),
+    cfg.BoolOpt('inject_key',
                 default=True,
-                help='Inject the ssh public key at boot time'),
-    cfg.IntOpt('libvirt_inject_partition',
+                help='Inject the ssh public key at boot time',
+                deprecated_name='libvirt_inject_key',
+                deprecated_group='DEFAULT'),
+    cfg.IntOpt('inject_partition',
                 default=1,
                 help='The partition to inject to : '
                      '-2 => disable, -1 => inspect (libguestfs only), '
-                     '0 => not partitioned, >0 => partition number'),
+                     '0 => not partitioned, >0 => partition number',
+               deprecated_name='libvirt_inject_partition',
+               deprecated_group='DEFAULT'),
     cfg.BoolOpt('use_usb_tablet',
                 default=True,
-                help='Sync virtual and real mouse cursors in Windows VMs'),
+                help='Sync virtual and real mouse cursors in Windows VMs',
+                deprecated_group='DEFAULT'),
     cfg.StrOpt('live_migration_uri',
                default="qemu+tcp://%s/system",
                help='Migration target URI '
                     '(any included "%s" is replaced with '
-                    'the migration target hostname)'),
+                    'the migration target hostname)',
+               deprecated_group='DEFAULT'),
     cfg.StrOpt('live_migration_flag',
                default='VIR_MIGRATE_UNDEFINE_SOURCE, VIR_MIGRATE_PEER2PEER',
-               help='Migration flags to be set for live migration'),
+               help='Migration flags to be set for live migration',
+               deprecated_group='DEFAULT'),
     cfg.StrOpt('block_migration_flag',
                default='VIR_MIGRATE_UNDEFINE_SOURCE, VIR_MIGRATE_PEER2PEER, '
                        'VIR_MIGRATE_NON_SHARED_INC',
-               help='Migration flags to be set for block migration'),
+               help='Migration flags to be set for block migration',
+               deprecated_group='DEFAULT'),
     cfg.IntOpt('live_migration_bandwidth',
                default=0,
-               help='Maximum bandwidth to be used during migration, in Mbps'),
+               help='Maximum bandwidth to be used during migration, in Mbps',
+               deprecated_group='DEFAULT'),
     cfg.StrOpt('snapshot_image_format',
                help='Snapshot image format (valid options are : '
                     'raw, qcow2, vmdk, vdi). '
-                    'Defaults to same as source image'),
-    cfg.StrOpt('libvirt_vif_driver',
+                    'Defaults to same as source image',
+               deprecated_group='DEFAULT'),
+    cfg.StrOpt('vif_driver',
                default='nova.virt.libvirt.vif.LibvirtGenericVIFDriver',
-               help='The libvirt VIF driver to configure the VIFs.'),
-    cfg.ListOpt('libvirt_volume_drivers',
+               help='The libvirt VIF driver to configure the VIFs.',
+               deprecated_name='libvirt_vif_driver',
+               deprecated_group='DEFAULT'),
+    cfg.ListOpt('volume_drivers',
                 default=[
                   'iscsi=nova.virt.libvirt.volume.LibvirtISCSIVolumeDriver',
                   'iser=nova.virt.libvirt.volume.LibvirtISERVolumeDriver',
@@ -180,49 +201,66 @@ libvirt_opts = [
                   'scality='
                       'nova.virt.libvirt.volume.LibvirtScalityVolumeDriver',
                   ],
-                help='Libvirt handlers for remote volumes.'),
-    cfg.StrOpt('libvirt_disk_prefix',
+                help='Libvirt handlers for remote volumes.',
+                deprecated_name='libvirt_volume_drivers',
+                deprecated_group='DEFAULT'),
+    cfg.StrOpt('disk_prefix',
                help='Override the default disk prefix for the devices attached'
-                    ' to a server, which is dependent on libvirt_type. '
-                    '(valid options are: sd, xvd, uvd, vd)'),
-    cfg.IntOpt('libvirt_wait_soft_reboot_seconds',
+                    ' to a server, which is dependent on virt_type. '
+                    '(valid options are: sd, xvd, uvd, vd)',
+               deprecated_name='libvirt_disk_prefix',
+               deprecated_group='DEFAULT'),
+    cfg.IntOpt('wait_soft_reboot_seconds',
                default=120,
                help='Number of seconds to wait for instance to shut down after'
                     ' soft reboot request is made. We fall back to hard reboot'
-                    ' if instance does not shutdown within this window.'),
-    cfg.BoolOpt('libvirt_nonblocking',
+                    ' if instance does not shutdown within this window.',
+               deprecated_name='libvirt_wait_soft_reboot_seconds',
+               deprecated_group='DEFAULT'),
+    cfg.BoolOpt('api_thread_pool',
                 default=True,
                 help='Use a separated OS thread pool to realize non-blocking'
-                     ' libvirt calls'),
-    cfg.StrOpt('libvirt_cpu_mode',
+                     ' libvirt calls',
+                deprecated_name='libvirt_non_blocking',
+                deprecated_group='DEFAULT'),
+    cfg.StrOpt('cpu_mode',
                help='Set to "host-model" to clone the host CPU feature flags; '
                     'to "host-passthrough" to use the host CPU model exactly; '
                     'to "custom" to use a named CPU model; '
                     'to "none" to not set any CPU model. '
-                    'If libvirt_type="kvm|qemu", it will default to '
-                    '"host-model", otherwise it will default to "none"'),
-    cfg.StrOpt('libvirt_cpu_model',
+                    'If virt_type="kvm|qemu", it will default to '
+                    '"host-model", otherwise it will default to "none"',
+               deprecated_name='libvirt_cpu_mode',
+               deprecated_group='DEFAULT'),
+    cfg.StrOpt('cpu_model',
                help='Set to a named libvirt CPU model (see names listed '
                     'in /usr/share/libvirt/cpu_map.xml). Only has effect if '
-                    'libvirt_cpu_mode="custom" and libvirt_type="kvm|qemu"'),
-    cfg.StrOpt('libvirt_snapshots_directory',
+                    'cpu_mode="custom" and virt_type="kvm|qemu"',
+               deprecated_name='libvirt_cpu_model',
+               deprecated_group='DEFAULT'),
+    cfg.StrOpt('snapshots_directory',
                default='$instances_path/snapshots',
                help='Location where libvirt driver will store snapshots '
-                    'before uploading them to image service'),
+                    'before uploading them to image service',
+               deprecated_name='libvirt_snapshots_directory',
+               deprecated_group='DEFAULT'),
     cfg.StrOpt('xen_hvmloader_path',
                 default='/usr/lib/xen/boot/hvmloader',
-                help='Location where the Xen hvmloader is kept'),
+                help='Location where the Xen hvmloader is kept',
+               deprecated_group='DEFAULT'),
     cfg.ListOpt('disk_cachemodes',
                  default=[],
                  help='Specific cachemodes to use for different disk types '
-                      'e.g: file=directsync,block=none'),
+                      'e.g: file=directsync,block=none',
+                deprecated_group='DEFAULT'),
     cfg.StrOpt('vcpu_pin_set',
                 help='Which pcpus can be used by vcpus of instance '
-                     'e.g: "4-12,^8,15"'),
+                     'e.g: "4-12,^8,15"',
+               deprecated_group='DEFAULT'),
     ]
 
 CONF = cfg.CONF
-CONF.register_opts(libvirt_opts)
+CONF.register_opts(libvirt_opts, 'libvirt')
 CONF.import_opt('host', 'nova.netconf')
 CONF.import_opt('my_ip', 'nova.netconf')
 CONF.import_opt('default_ephemeral_format', 'nova.virt.driver')
@@ -236,6 +274,9 @@ DEFAULT_FIREWALL_DRIVER = "%s.%s" % (
     libvirt_firewall.IptablesFirewallDriver.__name__)
 
 MAX_CONSOLE_BYTES = 100 * unit.Ki
+
+# The libvirt driver will prefix any disable reason codes with this string.
+DISABLE_PREFIX = 'AUTO: '
 
 
 def patch_tpool_proxy():
@@ -332,11 +373,11 @@ class LibvirtDriver(driver.ComputeDriver):
             self.virtapi,
             get_connection=self._get_connection)
 
-        vif_class = importutils.import_class(CONF.libvirt_vif_driver)
+        vif_class = importutils.import_class(CONF.libvirt.vif_driver)
         self.vif_driver = vif_class(self._get_connection)
 
         self.volume_drivers = driver.driver_dict_from_config(
-            CONF.libvirt_volume_drivers, self)
+            CONF.libvirt.volume_drivers, self)
 
         self.dev_filter = pci_whitelist.get_pci_devices_filter()
 
@@ -356,7 +397,7 @@ class LibvirtDriver(driver.ComputeDriver):
                                  "unsafe",
                                 ]
 
-        for mode_str in CONF.disk_cachemodes:
+        for mode_str in CONF.libvirt.disk_cachemodes:
             disk_type, sep, cache_mode = mode_str.partition('=')
             if cache_mode not in self.valid_cachemodes:
                 LOG.warn(_('Invalid cachemode %(cache_mode)s specified '
@@ -582,52 +623,56 @@ class LibvirtDriver(driver.ComputeDriver):
 
         self._init_events()
 
+    def _get_new_connection(self):
+        # call with _wrapped_conn_lock held
+        LOG.debug(_('Connecting to libvirt: %s'), self.uri())
+        wrapped_conn = None
+        try:
+            if not CONF.libvirt.api_thread_pool:
+                wrapped_conn = self._connect(self.uri(), self.read_only)
+            else:
+                wrapped_conn = tpool.proxy_call(
+                        (libvirt.virDomain, libvirt.virConnect),
+                        self._connect, self.uri(), self.read_only)
+        finally:
+            # Enabling the compute service, in case it was disabled
+            # since the connection was successful.
+            is_connected = bool(wrapped_conn)
+            self.set_host_enabled(CONF.host, is_connected)
+
+        self._wrapped_conn = wrapped_conn
+
+        try:
+            LOG.debug(_("Registering for lifecycle events %s") % str(self))
+            wrapped_conn.domainEventRegisterAny(
+                None,
+                libvirt.VIR_DOMAIN_EVENT_ID_LIFECYCLE,
+                self._event_lifecycle_callback,
+                self)
+        except Exception as e:
+            LOG.warn(_("URI %(uri)s does not support events: %(error)s"),
+                     {'uri': self.uri(), 'error': e})
+
+        if self._has_min_version(wrapped_conn,
+                                 MIN_LIBVIRT_CLOSE_CALLBACK_VERSION):
+            try:
+                LOG.debug(_("Registering for connection events: %s") %
+                          str(self))
+                wrapped_conn.registerCloseCallback(
+                        self._close_callback, None)
+            except libvirt.libvirtError as e:
+                LOG.warn(_("URI %(uri)s does not support connection"
+                         " events: %(error)s"),
+                         {'uri': self.uri(), 'error': e})
+
+        return wrapped_conn
+
     def _get_connection(self):
         # multiple concurrent connections are protected by _wrapped_conn_lock
         with self._wrapped_conn_lock:
             wrapped_conn = self._wrapped_conn
-
             if not wrapped_conn or not self._test_connection(wrapped_conn):
-                LOG.debug(_('Connecting to libvirt: %s'), self.uri())
-                try:
-                    if not CONF.libvirt_nonblocking:
-                        wrapped_conn = self._connect(self.uri(),
-                                                     self.read_only)
-                    else:
-                        wrapped_conn = tpool.proxy_call(
-                            (libvirt.virDomain, libvirt.virConnect),
-                            self._connect, self.uri(), self.read_only)
-                finally:
-                    # Enabling the compute service, in case it was disabled
-                    # since the connection was successful.
-                    is_connected = bool(wrapped_conn)
-                    self.set_host_enabled(CONF.host, is_connected)
-
-                self._wrapped_conn = wrapped_conn
-
-            try:
-                LOG.debug(_("Registering for lifecycle events %s") %
-                          str(self))
-                wrapped_conn.domainEventRegisterAny(
-                    None,
-                    libvirt.VIR_DOMAIN_EVENT_ID_LIFECYCLE,
-                    self._event_lifecycle_callback,
-                    self)
-            except Exception as e:
-                LOG.warn(_("URI %(uri)s does not support events: %(error)s"),
-                         {'uri': self.uri(), 'error': e})
-
-            if self._has_min_version(wrapped_conn,
-                                     MIN_LIBVIRT_CLOSE_CALLBACK_VERSION):
-                try:
-                    LOG.debug(_("Registering for connection events: %s") %
-                              str(self))
-                    wrapped_conn.registerCloseCallback(
-                        self._close_callback, None)
-                except libvirt.libvirtError as e:
-                    LOG.warn(_("URI %(uri)s does not support connection"
-                             " events: %(error)s"),
-                             {'uri': self.uri(), 'error': e})
+                wrapped_conn = self._get_new_connection()
 
         return wrapped_conn
 
@@ -660,14 +705,14 @@ class LibvirtDriver(driver.ComputeDriver):
 
     @staticmethod
     def uri():
-        if CONF.libvirt_type == 'uml':
-            uri = CONF.libvirt_uri or 'uml:///system'
-        elif CONF.libvirt_type == 'xen':
-            uri = CONF.libvirt_uri or 'xen:///'
-        elif CONF.libvirt_type == 'lxc':
-            uri = CONF.libvirt_uri or 'lxc:///'
+        if CONF.libvirt.virt_type == 'uml':
+            uri = CONF.libvirt.connection_uri or 'uml:///system'
+        elif CONF.libvirt.virt_type == 'xen':
+            uri = CONF.libvirt.connection_uri or 'xen:///'
+        elif CONF.libvirt.virt_type == 'lxc':
+            uri = CONF.libvirt.connection_uri or 'lxc:///'
         else:
-            uri = CONF.libvirt_uri or 'qemu:///system'
+            uri = CONF.libvirt.connection_uri or 'qemu:///system'
         return uri
 
     @staticmethod
@@ -953,7 +998,7 @@ class LibvirtDriver(driver.ComputeDriver):
 
         if destroy_disks:
             #NOTE(GuanQiang): teardown lxc container to avoid resource leak
-            if CONF.libvirt_type == 'lxc':
+            if CONF.libvirt.virt_type == 'lxc':
                 inst_path = libvirt_utils.get_instance_path(instance)
                 container_dir = os.path.join(inst_path, 'rootfs')
                 container_root_device = instance.get('root_device_name')
@@ -1070,8 +1115,8 @@ class LibvirtDriver(driver.ComputeDriver):
         disk_dev = mountpoint.rpartition("/")[2]
         disk_info = {
             'dev': disk_dev,
-            'bus': blockinfo.get_disk_bus_for_disk_dev(CONF.libvirt_type,
-                                                       disk_dev),
+            'bus': blockinfo.get_disk_bus_for_disk_dev(
+                CONF.libvirt.virt_type, disk_dev),
             'type': 'disk',
             }
 
@@ -1083,10 +1128,11 @@ class LibvirtDriver(driver.ComputeDriver):
         if ('data' in connection_info):
             data = connection_info['data']
         if ('logical_block_size' in data or 'physical_block_size' in data):
-            if CONF.libvirt_type != "kvm" and CONF.libvirt_type != "qemu":
+            if ((CONF.libvirt.virt_type != "kvm" and
+                 CONF.libvirt.virt_type != "qemu")):
                 msg = _("Volume sets block size, but the current "
                         "libvirt hypervisor '%s' does not support custom "
-                        "block size") % CONF.libvirt_type
+                        "block size") % CONF.libvirt.virt_type
                 raise exception.InvalidHypervisorType(msg)
 
             if not self.has_min_version(MIN_LIBVIRT_BLOCKIO_VERSION):
@@ -1177,8 +1223,8 @@ class LibvirtDriver(driver.ComputeDriver):
             raise exception.DiskNotFound(location=disk_dev)
         disk_info = {
             'dev': disk_dev,
-            'bus': blockinfo.get_disk_bus_for_disk_dev(CONF.libvirt_type,
-                                                       disk_dev),
+            'bus': blockinfo.get_disk_bus_for_disk_dev(
+                CONF.libvirt.virt_type, disk_dev),
             'type': 'disk',
             }
         conf = self.volume_driver_method('connect_volume',
@@ -1215,7 +1261,7 @@ class LibvirtDriver(driver.ComputeDriver):
             virt_dom = self._lookup_by_name(instance['name'])
             xml = virt_dom.XMLDesc(0)
         except exception.InstanceNotFound:
-            disk_info = blockinfo.get_disk_info(CONF.libvirt_type,
+            disk_info = blockinfo.get_disk_info(CONF.libvirt.virt_type,
                                                 instance,
                                                 block_device_info)
             xml = self.to_xml(nova_context.get_admin_context(),
@@ -1266,7 +1312,7 @@ class LibvirtDriver(driver.ComputeDriver):
 
     def attach_interface(self, instance, image_meta, vif):
         virt_dom = self._lookup_by_name(instance['name'])
-        inst_type = self.virtapi.instance_type_get(
+        inst_type = self.virtapi.flavor_get(
             nova_context.get_admin_context(read_deleted='yes'),
             instance['instance_type_id'])
         self.vif_driver.plug(instance, vif)
@@ -1287,7 +1333,7 @@ class LibvirtDriver(driver.ComputeDriver):
 
     def detach_interface(self, instance, vif):
         virt_dom = self._lookup_by_name(instance['name'])
-        inst_type = self.virtapi.instance_type_get(
+        inst_type = self.virtapi.flavor_get(
             nova_context.get_admin_context(read_deleted='yes'),
             instance['instance_type_id'])
         cfg = self.vif_driver.get_config(instance, vif, None, inst_type)
@@ -1357,7 +1403,7 @@ class LibvirtDriver(driver.ComputeDriver):
         disk_path = libvirt_utils.find_disk(virt_dom)
         source_format = libvirt_utils.get_disk_type(disk_path)
 
-        image_format = CONF.snapshot_image_format or source_format
+        image_format = CONF.libvirt.snapshot_image_format or source_format
 
         # NOTE(bfilippov): save lvm and rbd as raw
         if image_format == 'lvm' or image_format == 'rbd':
@@ -1403,14 +1449,13 @@ class LibvirtDriver(driver.ComputeDriver):
             live_snapshot = False
 
         # NOTE(dkang): managedSave does not work for LXC
-        if CONF.libvirt_type != 'lxc' and not live_snapshot:
+        if CONF.libvirt.virt_type != 'lxc' and not live_snapshot:
             if state == power_state.RUNNING or state == power_state.PAUSED:
                 self._detach_pci_devices(virt_dom,
                     pci_manager.get_instance_pci_devs(instance))
                 virt_dom.managedSave(0)
 
         snapshot_backend = self.image_backend.snapshot(disk_path,
-                snapshot_name,
                 image_type=source_format)
 
         if live_snapshot:
@@ -1419,10 +1464,9 @@ class LibvirtDriver(driver.ComputeDriver):
         else:
             LOG.info(_("Beginning cold snapshot process"),
                      instance=instance)
-            snapshot_backend.snapshot_create()
 
         update_task_state(task_state=task_states.IMAGE_PENDING_UPLOAD)
-        snapshot_directory = CONF.libvirt_snapshots_directory
+        snapshot_directory = CONF.libvirt.snapshots_directory
         fileutils.ensure_tree(snapshot_directory)
         with utils.tempdir(dir=snapshot_directory) as tmpdir:
             try:
@@ -1436,12 +1480,10 @@ class LibvirtDriver(driver.ComputeDriver):
                 else:
                     snapshot_backend.snapshot_extract(out_path, image_format)
             finally:
-                if not live_snapshot:
-                    snapshot_backend.snapshot_delete()
                 new_dom = None
                 # NOTE(dkang): because previous managedSave is not called
                 #              for LXC, _create_domain must not be called.
-                if CONF.libvirt_type != 'lxc' and not live_snapshot:
+                if CONF.libvirt.virt_type != 'lxc' and not live_snapshot:
                     if state == power_state.RUNNING:
                         new_dom = self._create_domain(domain=virt_dom)
                     elif state == power_state.PAUSED:
@@ -1530,7 +1572,7 @@ class LibvirtDriver(driver.ComputeDriver):
 
         # Convert the delta (CoW) image with a backing file to a flat
         # image with no backing file.
-        libvirt_utils.extract_snapshot(disk_delta, 'qcow2', None,
+        libvirt_utils.extract_snapshot(disk_delta, 'qcow2',
                                        out_path, image_format)
 
     def _volume_snapshot_update_status(self, context, snapshot_id, status):
@@ -1667,9 +1709,8 @@ class LibvirtDriver(driver.ComputeDriver):
                                   the snapshot is complete
         """
 
-        LOG.debug(_("volume_snapshot_create: instance: %(instance)s "
-                    "create_info: %(c_info)s") % {'instance': instance['uuid'],
-                                                 'c_info': create_info})
+        LOG.debug(_("volume_snapshot_create: create_info: %(c_info)s"),
+                  {'c_info': create_info}, instance=instance)
 
         try:
             virt_dom = self._lookup_by_name(instance['name'])
@@ -1882,7 +1923,7 @@ class LibvirtDriver(driver.ComputeDriver):
         #             call takes to return.
         self._prepare_pci_devices_for_use(
             pci_manager.get_instance_pci_devs(instance))
-        for x in xrange(CONF.libvirt_wait_soft_reboot_seconds):
+        for x in xrange(CONF.libvirt.wait_soft_reboot_seconds):
             dom = self._lookup_by_name(instance["name"])
             (state, _max_mem, _mem, _cpus, _t) = dom.info()
             state = LIBVIRT_POWER_STATE[state]
@@ -1922,7 +1963,7 @@ class LibvirtDriver(driver.ComputeDriver):
         """
 
         self._destroy(instance)
-        disk_info = blockinfo.get_disk_info(CONF.libvirt_type,
+        disk_info = blockinfo.get_disk_info(CONF.libvirt.virt_type,
                                             instance,
                                             block_device_info)
         # NOTE(vish): This could generate the wrong device_format if we are
@@ -2038,11 +2079,13 @@ class LibvirtDriver(driver.ComputeDriver):
         libvirt_utils.write_to_file(unrescue_xml_path, unrescue_xml)
 
         rescue_images = {
-            'image_id': CONF.rescue_image_id or instance['image_ref'],
-            'kernel_id': CONF.rescue_kernel_id or instance['kernel_id'],
-            'ramdisk_id': CONF.rescue_ramdisk_id or instance['ramdisk_id'],
+            'image_id': CONF.libvirt.rescue_image_id or instance['image_ref'],
+            'kernel_id': (CONF.libvirt.rescue_kernel_id or
+                          instance['kernel_id']),
+            'ramdisk_id': (CONF.libvirt.rescue_ramdisk_id or
+                           instance['ramdisk_id']),
         }
-        disk_info = blockinfo.get_disk_info(CONF.libvirt_type,
+        disk_info = blockinfo.get_disk_info(CONF.libvirt.virt_type,
                                             instance,
                                             None,
                                             image_meta,
@@ -2088,7 +2131,7 @@ class LibvirtDriver(driver.ComputeDriver):
     # for xenapi(tr3buchet)
     def spawn(self, context, instance, image_meta, injected_files,
               admin_password, network_info=None, block_device_info=None):
-        disk_info = blockinfo.get_disk_info(CONF.libvirt_type,
+        disk_info = blockinfo.get_disk_info(CONF.libvirt.virt_type,
                                             instance,
                                             block_device_info,
                                             image_meta)
@@ -2285,7 +2328,8 @@ class LibvirtDriver(driver.ComputeDriver):
                                     '%d%c' % (local_size, unit))
 
     def _create_ephemeral(self, target, ephemeral_size,
-                          fs_label, os_type, is_block_dev=False):
+                          fs_label, os_type, is_block_dev=False,
+                          max_size=None):
         if not is_block_dev:
             self._create_local(target, ephemeral_size)
 
@@ -2293,7 +2337,7 @@ class LibvirtDriver(driver.ComputeDriver):
         disk.mkfs(os_type, fs_label, target, run_as_root=is_block_dev)
 
     @staticmethod
-    def _create_swap(target, swap_mb):
+    def _create_swap(target, swap_mb, max_size=None):
         """Create a swap file of specified size."""
         libvirt_utils.create_image('raw', target, '%dM' % swap_mb)
         utils.mkfs('swap', target)
@@ -2463,7 +2507,7 @@ class LibvirtDriver(driver.ComputeDriver):
                                   e, instance=instance)
 
         # File injection only if needed
-        elif inject_files and CONF.libvirt_inject_partition != -2:
+        elif inject_files and CONF.libvirt.inject_partition != -2:
 
             if booted_from_volume:
                 LOG.warn(_('File injection into a boot from volume '
@@ -2471,13 +2515,13 @@ class LibvirtDriver(driver.ComputeDriver):
 
             target_partition = None
             if not instance['kernel_id']:
-                target_partition = CONF.libvirt_inject_partition
+                target_partition = CONF.libvirt.inject_partition
                 if target_partition == 0:
                     target_partition = None
-            if CONF.libvirt_type == 'lxc':
+            if CONF.libvirt.virt_type == 'lxc':
                 target_partition = None
 
-            if CONF.libvirt_inject_key and instance['key_data']:
+            if CONF.libvirt.inject_key and instance['key_data']:
                 key = str(instance['key_data'])
             else:
                 key = None
@@ -2486,7 +2530,7 @@ class LibvirtDriver(driver.ComputeDriver):
 
             metadata = instance.get('metadata')
 
-            if not CONF.libvirt_inject_password:
+            if not CONF.libvirt.inject_password:
                 admin_pass = None
 
             if any((key, net, metadata, admin_pass, files)):
@@ -2517,7 +2561,7 @@ class LibvirtDriver(driver.ComputeDriver):
                                   {'img_id': img_id, 'e': e},
                                   instance=instance)
 
-        if CONF.libvirt_type == 'uml':
+        if CONF.libvirt.virt_type == 'uml':
             libvirt_utils.chown(image('disk').path, 'root')
 
     def _prepare_pci_devices_for_use(self, pci_devices):
@@ -2525,7 +2569,7 @@ class LibvirtDriver(driver.ComputeDriver):
         # In managed mode, the configured device will be automatically
         # detached from the host OS drivers when the guest is started,
         # and then re-attached when the guest shuts down.
-        if CONF.libvirt_type not in ('xen'):
+        if CONF.libvirt.virt_type not in ('xen'):
             # we do manual detach only for xen
             return
         try:
@@ -2603,7 +2647,12 @@ class LibvirtDriver(driver.ComputeDriver):
             raise
 
     def set_host_enabled(self, host, enabled):
-        """Sets the specified host's ability to accept new instances."""
+        """Sets the specified host's ability to accept new instances.
+
+           This doesn't override non-automatic disablement with an automatic
+           setting; thereby permitting operators to keep otherwise
+           healthy hosts out of rotation.
+        """
 
         status_name = {True: 'Enabled',
                        False: 'Disabled'}
@@ -2620,11 +2669,26 @@ class LibvirtDriver(driver.ComputeDriver):
             service = service_obj.Service.get_by_compute_host(ctx, CONF.host)
 
             if service.disabled != disable_service:
-                service.disabled = disable_service
-                service.disabled_reason = disable_reason
-                service.save()
-                LOG.debug(_('Updating compute service status to: %s'),
-                             status_name[disable_service])
+                # Note(jang): this is a quick fix to stop operator-
+                # disabled compute hosts from re-enabling themselves
+                # automatically. We prefix any automatic reason code
+                # with a fixed string. We only re-enable a host
+                # automatically if we find that string in place.
+                # This should probably be replaced with a separate flag.
+                if not service.disabled or (
+                        service.disabled_reason and
+                        service.disabled_reason.startswith(DISABLE_PREFIX)):
+                    service.disabled = disable_service
+                    service.disabled_reason = (
+                       DISABLE_PREFIX + disable_reason
+                       if disable_service else '')
+                    service.save()
+                    LOG.debug(_('Updating compute service status to: %s'),
+                                 status_name[disable_service])
+                else:
+                    LOG.debug(_('Not overriding manual compute service '
+                                'status with: %s'),
+                                 status_name[disable_service])
         except exception.ComputeHostNotFound:
             LOG.warn(_('Cannot update service status on host: %s,'
                         'since it is not registered.') % CONF.host)
@@ -2683,11 +2747,12 @@ class LibvirtDriver(driver.ComputeDriver):
         return guestcpu
 
     def get_guest_cpu_config(self):
-        mode = CONF.libvirt_cpu_mode
-        model = CONF.libvirt_cpu_model
+        mode = CONF.libvirt.cpu_mode
+        model = CONF.libvirt.cpu_model
 
         if mode is None:
-            if CONF.libvirt_type == "kvm" or CONF.libvirt_type == "qemu":
+            if ((CONF.libvirt.virt_type == "kvm" or
+                 CONF.libvirt.virt_type == "qemu")):
                 mode = "host-model"
             else:
                 mode = "none"
@@ -2695,10 +2760,11 @@ class LibvirtDriver(driver.ComputeDriver):
         if mode == "none":
             return None
 
-        if CONF.libvirt_type != "kvm" and CONF.libvirt_type != "qemu":
+        if ((CONF.libvirt.virt_type != "kvm" and
+             CONF.libvirt.virt_type != "qemu")):
             msg = _("Config requested an explicit CPU model, but "
                     "the current libvirt hypervisor '%s' does not "
-                    "support selecting CPU models") % CONF.libvirt_type
+                    "support selecting CPU models") % CONF.libvirt.virt_type
             raise exception.Invalid(msg)
 
         if mode == "custom" and model is None:
@@ -2755,7 +2821,7 @@ class LibvirtDriver(driver.ComputeDriver):
         block_device_mapping = driver.block_device_info_get_mapping(
             block_device_info)
 
-        if CONF.libvirt_type == "lxc":
+        if CONF.libvirt.virt_type == "lxc":
             fs = vconfig.LibvirtConfigGuestFilesys()
             fs.source_type = "mount"
             fs.source_dir = os.path.join(
@@ -2855,9 +2921,9 @@ class LibvirtDriver(driver.ComputeDriver):
         dev.domain, dev.bus, dev.slot, dev.function = dbsf
 
         # only kvm support managed mode
-        if CONF.libvirt_type in ('xen'):
+        if CONF.libvirt.virt_type in ('xen'):
             dev.managed = 'no'
-        if CONF.libvirt_type in ('kvm', 'qemu'):
+        if CONF.libvirt.virt_type in ('kvm', 'qemu'):
             dev.managed = 'yes'
 
         return dev
@@ -2871,7 +2937,7 @@ class LibvirtDriver(driver.ComputeDriver):
             'kernel_id' if a kernel is needed for the rescue image.
         """
 
-        inst_type = self.virtapi.instance_type_get(
+        inst_type = self.virtapi.flavor_get(
             nova_context.get_admin_context(read_deleted='yes'),
             instance['instance_type_id'])
         inst_path = libvirt_utils.get_instance_path(instance)
@@ -2880,12 +2946,12 @@ class LibvirtDriver(driver.ComputeDriver):
         CONSOLE = "console=tty0 console=ttyS0"
 
         guest = vconfig.LibvirtConfigGuest()
-        guest.virt_type = CONF.libvirt_type
+        guest.virt_type = CONF.libvirt.virt_type
         guest.name = instance['name']
         guest.uuid = instance['uuid']
         guest.memory = inst_type['memory_mb'] * 1024
         guest.vcpus = inst_type['vcpus']
-        guest.cpuset = CONF.vcpu_pin_set
+        guest.cpuset = CONF.libvirt.vcpu_pin_set
 
         quota_items = ['cpu_shares', 'cpu_period', 'cpu_quota']
         for key, value in inst_type['extra_specs'].iteritems():
@@ -2912,34 +2978,35 @@ class LibvirtDriver(driver.ComputeDriver):
         guest.os_type = vm_mode.get_from_instance(instance)
 
         if guest.os_type is None:
-            if CONF.libvirt_type == "lxc":
+            if CONF.libvirt.virt_type == "lxc":
                 guest.os_type = vm_mode.EXE
-            elif CONF.libvirt_type == "uml":
+            elif CONF.libvirt.virt_type == "uml":
                 guest.os_type = vm_mode.UML
-            elif CONF.libvirt_type == "xen":
+            elif CONF.libvirt.virt_type == "xen":
                 guest.os_type = vm_mode.XEN
             else:
                 guest.os_type = vm_mode.HVM
 
-        if CONF.libvirt_type == "xen" and guest.os_type == vm_mode.HVM:
-            guest.os_loader = CONF.xen_hvmloader_path
+        if CONF.libvirt.virt_type == "xen" and guest.os_type == vm_mode.HVM:
+            guest.os_loader = CONF.libvirt.xen_hvmloader_path
 
-        if CONF.libvirt_type in ("kvm", "qemu"):
+        if CONF.libvirt.virt_type in ("kvm", "qemu"):
             caps = self.get_host_capabilities()
             if caps.host.cpu.arch in ("i686", "x86_64"):
                 guest.sysinfo = self.get_guest_config_sysinfo(instance)
                 guest.os_smbios = vconfig.LibvirtConfigGuestSMBIOS()
 
-        if CONF.libvirt_type == "lxc":
+        if CONF.libvirt.virt_type == "lxc":
             guest.os_type = vm_mode.EXE
             guest.os_init_path = "/sbin/init"
             guest.os_cmdline = CONSOLE
-        elif CONF.libvirt_type == "uml":
+        elif CONF.libvirt.virt_type == "uml":
             guest.os_type = vm_mode.UML
             guest.os_kernel = "/usr/bin/linux"
             guest.os_root = root_device_name
         else:
-            if CONF.libvirt_type == "xen" and guest.os_type == vm_mode.XEN:
+            if ((CONF.libvirt.virt_type == "xen" and
+                 guest.os_type == vm_mode.XEN)):
                 guest.os_root = root_device_name
             else:
                 guest.os_type = vm_mode.HVM
@@ -2947,7 +3014,7 @@ class LibvirtDriver(driver.ComputeDriver):
             if rescue:
                 if rescue.get('kernel_id'):
                     guest.os_kernel = os.path.join(inst_path, "kernel.rescue")
-                    if CONF.libvirt_type == "xen":
+                    if CONF.libvirt.virt_type == "xen":
                         guest.os_cmdline = "ro"
                     else:
                         guest.os_cmdline = ("root=%s %s" % (root_device_name,
@@ -2957,7 +3024,7 @@ class LibvirtDriver(driver.ComputeDriver):
                     guest.os_initrd = os.path.join(inst_path, "ramdisk.rescue")
             elif instance['kernel_id']:
                 guest.os_kernel = os.path.join(inst_path, "kernel")
-                if CONF.libvirt_type == "xen":
+                if CONF.libvirt.virt_type == "xen":
                     guest.os_cmdline = "ro"
                 else:
                     guest.os_cmdline = ("root=%s %s" % (root_device_name,
@@ -2967,7 +3034,8 @@ class LibvirtDriver(driver.ComputeDriver):
             else:
                 guest.os_boot_dev = blockinfo.get_boot_order(disk_info)
 
-        if CONF.libvirt_type != "lxc" and CONF.libvirt_type != "uml":
+        if ((CONF.libvirt.virt_type != "lxc" and
+             CONF.libvirt.virt_type != "uml")):
             guest.acpi = True
             guest.apic = True
 
@@ -2984,7 +3052,7 @@ class LibvirtDriver(driver.ComputeDriver):
             clk.offset = 'utc'
         guest.set_clock(clk)
 
-        if CONF.libvirt_type == "kvm":
+        if CONF.libvirt.virt_type == "kvm":
             # TODO(berrange) One day this should be per-guest
             # OS type configurable
             tmpit = vconfig.LibvirtConfigGuestTimer()
@@ -3013,7 +3081,8 @@ class LibvirtDriver(driver.ComputeDriver):
                                              inst_type)
             guest.add_device(cfg)
 
-        if CONF.libvirt_type == "qemu" or CONF.libvirt_type == "kvm":
+        if ((CONF.libvirt.virt_type == "qemu" or
+             CONF.libvirt.virt_type == "kvm")):
             # The QEMU 'pty' driver throws away any data if no
             # client app is connected. Thus we can't get away
             # with a single type=pty console. Instead we have
@@ -3038,9 +3107,9 @@ class LibvirtDriver(driver.ComputeDriver):
         # SPICE agent is used or not.
         need_usb_tablet = False
         if CONF.vnc_enabled:
-            need_usb_tablet = CONF.use_usb_tablet
+            need_usb_tablet = CONF.libvirt.use_usb_tablet
         elif CONF.spice.enabled and not CONF.spice.agent_enabled:
-            need_usb_tablet = CONF.use_usb_tablet
+            need_usb_tablet = CONF.libvirt.use_usb_tablet
 
         if need_usb_tablet and guest.os_type == vm_mode.HVM:
             tablet = vconfig.LibvirtConfigGuestInput()
@@ -3049,7 +3118,7 @@ class LibvirtDriver(driver.ComputeDriver):
             guest.add_device(tablet)
 
         if CONF.spice.enabled and CONF.spice.agent_enabled and \
-                CONF.libvirt_type not in ('lxc', 'uml', 'xen'):
+                CONF.libvirt.virt_type not in ('lxc', 'uml', 'xen'):
             channel = vconfig.LibvirtConfigGuestChannel()
             channel.target_name = "com.redhat.spice.0"
             guest.add_device(channel)
@@ -3059,7 +3128,8 @@ class LibvirtDriver(driver.ComputeDriver):
         # those versions are. We'll just let libvirt report the
         # errors appropriately if the user enables both.
 
-        if CONF.vnc_enabled and CONF.libvirt_type not in ('lxc', 'uml'):
+        if ((CONF.vnc_enabled and
+             CONF.libvirt.virt_type not in ('lxc', 'uml'))):
             graphics = vconfig.LibvirtConfigGuestGraphics()
             graphics.type = "vnc"
             graphics.keymap = CONF.vnc_keymap
@@ -3067,7 +3137,7 @@ class LibvirtDriver(driver.ComputeDriver):
             guest.add_device(graphics)
 
         if CONF.spice.enabled and \
-                CONF.libvirt_type not in ('lxc', 'uml', 'xen'):
+                CONF.libvirt.virt_type not in ('lxc', 'uml', 'xen'):
             graphics = vconfig.LibvirtConfigGuestGraphics()
             graphics.type = "spice"
             graphics.keymap = CONF.spice.keymap
@@ -3075,7 +3145,7 @@ class LibvirtDriver(driver.ComputeDriver):
             guest.add_device(graphics)
 
         # Qemu guest agent only support 'qemu' and 'kvm' hypervisor
-        if CONF.libvirt_type in ('qemu', 'kvm'):
+        if CONF.libvirt.virt_type in ('qemu', 'kvm'):
             qga_enabled = False
             # Enable qga only if the 'hw_qemu_guest_agent' property is set
             if (image_meta is not None and image_meta.get('properties') and
@@ -3095,13 +3165,13 @@ class LibvirtDriver(driver.ComputeDriver):
                                 ("org.qemu.guest_agent.0", instance['name']))
                 guest.add_device(qga)
 
-        if CONF.libvirt_type in ('xen', 'qemu', 'kvm'):
+        if CONF.libvirt.virt_type in ('xen', 'qemu', 'kvm'):
             for pci_dev in pci_manager.get_instance_pci_devs(instance):
                 guest.add_device(self.get_guest_pci_device(pci_dev))
         else:
             if len(pci_manager.get_instance_pci_devs(instance)) > 0:
                 raise exception.PciDeviceUnsupportedHypervisor(
-                    type=CONF.libvirt_type)
+                    type=CONF.libvirt.virt_type)
 
         return guest
 
@@ -3114,14 +3184,15 @@ class LibvirtDriver(driver.ComputeDriver):
                                             context, instance['image_ref'])
             image_meta = compute_utils.get_image_metadata(
                                 context, image_service, image_id, instance)
-        LOG.debug(_('Start to_xml instance=%(instance)s '
+        LOG.debug(_('Start to_xml '
                     'network_info=%(network_info)s '
                     'disk_info=%(disk_info)s '
                     'image_meta=%(image_meta)s rescue=%(rescue)s'
                     'block_device_info=%(block_device_info)s'),
-                  {'instance': instance, 'network_info': network_info,
-                   'disk_info': disk_info, 'image_meta': image_meta,
-                   'rescue': rescue, 'block_device_info': block_device_info})
+                  {'network_info': network_info, 'disk_info': disk_info,
+                   'image_meta': image_meta, 'rescue': rescue,
+                   'block_device_info': block_device_info},
+                  instance=instance)
         conf = self.get_guest_config(instance, network_info, image_meta,
                                      disk_info, rescue, block_device_info)
         xml = conf.to_xml()
@@ -3131,8 +3202,8 @@ class LibvirtDriver(driver.ComputeDriver):
             xml_path = os.path.join(instance_dir, 'libvirt.xml')
             libvirt_utils.write_to_file(xml_path, xml)
 
-        LOG.debug(_('End to_xml instance=%(instance)s xml=%(xml)s'),
-                  {'instance': instance, 'xml': xml})
+        LOG.debug(_('End to_xml xml=%(xml)s'),
+                  {'xml': xml}, instance=instance)
         return xml
 
     def _lookup_by_id(self, instance_id):
@@ -3205,7 +3276,7 @@ class LibvirtDriver(driver.ComputeDriver):
         if instance:
             inst_path = libvirt_utils.get_instance_path(instance)
 
-        if CONF.libvirt_type == 'lxc':
+        if CONF.libvirt.virt_type == 'lxc':
             if not inst_path:
                 inst_path = None
 
@@ -3251,7 +3322,7 @@ class LibvirtDriver(driver.ComputeDriver):
         # NOTE(uni): Now the container is running with its own private mount
         # namespace and so there is no need to keep the container rootfs
         # mounted in the host namespace
-        if CONF.libvirt_type == 'lxc':
+        if CONF.libvirt.virt_type == 'lxc':
             state = self.get_info(instance)['state']
             container_dir = os.path.join(inst_path, 'rootfs')
             if state == power_state.RUNNING:
@@ -3271,7 +3342,8 @@ class LibvirtDriver(driver.ComputeDriver):
 
         for vol in block_device_mapping:
             connection_info = vol['connection_info']
-            disk_info = blockinfo.get_info_from_bdm(CONF.libvirt_type, vol)
+            disk_info = blockinfo.get_info_from_bdm(
+                CONF.libvirt.virt_type, vol)
             conf = self.volume_driver_method('connect_volume',
                                              connection_info,
                                              disk_info)
@@ -3380,7 +3452,7 @@ class LibvirtDriver(driver.ComputeDriver):
         """
         cpuset_ids = set()
         cpuset_reject_ids = set()
-        for rule in CONF.vcpu_pin_set.split(','):
+        for rule in CONF.libvirt.vcpu_pin_set.split(','):
             rule = rule.strip()
             # Handle multi ','
             if len(rule) < 1:
@@ -3418,7 +3490,7 @@ class LibvirtDriver(driver.ComputeDriver):
         cpuset_ids -= cpuset_reject_ids
         if not cpuset_ids:
             raise exception.Invalid(_("No CPUs available after parsing %r") %
-                                    CONF.vcpu_pin_set)
+                                    CONF.libvirt.vcpu_pin_set)
         # This will convert the set to a sorted list for us
         return sorted(cpuset_ids)
 
@@ -3438,7 +3510,7 @@ class LibvirtDriver(driver.ComputeDriver):
                        "function is not implemented for this platform. "))
             return 0
 
-        if CONF.vcpu_pin_set is None:
+        if CONF.libvirt.vcpu_pin_set is None:
             self._vcpu_total = total_pcpus
             return self._vcpu_total
 
@@ -3487,7 +3559,7 @@ class LibvirtDriver(driver.ComputeDriver):
         """
 
         total = 0
-        if CONF.libvirt_type == 'lxc':
+        if CONF.libvirt.virt_type == 'lxc':
             return total + 1
 
         dom_ids = self.list_instance_ids()
@@ -3521,7 +3593,7 @@ class LibvirtDriver(driver.ComputeDriver):
         idx1 = m.index('MemFree:')
         idx2 = m.index('Buffers:')
         idx3 = m.index('Cached:')
-        if CONF.libvirt_type == 'xen':
+        if CONF.libvirt.virt_type == 'xen':
             used = 0
             for domain_id in self.list_instance_ids():
                 try:
@@ -3752,10 +3824,9 @@ class LibvirtDriver(driver.ComputeDriver):
                                  flush_operations=vol_stats[4])
                     LOG.debug(
                         _("Got volume usage stats for the volume=%(volume)s,"
-                          " instance=%(instance)s, rd_req=%(rd_req)d,"
-                          " rd_bytes=%(rd_bytes)d, wr_req=%(wr_req)d,"
-                          " wr_bytes=%(wr_bytes)d")
-                        % stats)
+                          " rd_req=%(rd_req)d, rd_bytes=%(rd_bytes)d, "
+                          "wr_req=%(wr_req)d, wr_bytes=%(wr_bytes)d"),
+                        stats, instance=instance)
                     vol_usage.append(stats)
 
         return vol_usage
@@ -3831,7 +3902,8 @@ class LibvirtDriver(driver.ComputeDriver):
         fd, tmp_file = tempfile.mkstemp(dir=dirpath)
         LOG.debug(_("Creating tmpfile %s to verify with other "
                     "compute node that the instance is on "
-                    "the same shared storage.") % tmp_file)
+                    "the same shared storage."),
+                  tmp_file, instance=instance)
         os.close(fd)
         return {"filename": tmp_file}
 
@@ -3987,7 +4059,7 @@ class LibvirtDriver(driver.ComputeDriver):
         """
 
         # NOTE(berendt): virConnectCompareCPU not working for Xen
-        if CONF.libvirt_type == 'xen':
+        if CONF.libvirt.virt_type == 'xen':
             return 1
 
         info = jsonutils.loads(cpu_info)
@@ -4128,17 +4200,17 @@ class LibvirtDriver(driver.ComputeDriver):
         # Do live migration.
         try:
             if block_migration:
-                flaglist = CONF.block_migration_flag.split(',')
+                flaglist = CONF.libvirt.block_migration_flag.split(',')
             else:
-                flaglist = CONF.live_migration_flag.split(',')
+                flaglist = CONF.libvirt.live_migration_flag.split(',')
             flagvals = [getattr(libvirt, x.strip()) for x in flaglist]
             logical_sum = reduce(lambda x, y: x | y, flagvals)
 
             dom = self._lookup_by_name(instance["name"])
-            dom.migrateToURI(CONF.live_migration_uri % dest,
+            dom.migrateToURI(CONF.libvirt.live_migration_uri % dest,
                              logical_sum,
                              None,
-                             CONF.live_migration_bandwidth)
+                             CONF.libvirt.live_migration_bandwidth)
 
         except Exception as e:
             with excutils.save_and_reraise_exception():
@@ -4224,7 +4296,8 @@ class LibvirtDriver(driver.ComputeDriver):
             block_device_info)
         for vol in block_device_mapping:
             connection_info = vol['connection_info']
-            disk_info = blockinfo.get_info_from_bdm(CONF.libvirt_type, vol)
+            disk_info = blockinfo.get_info_from_bdm(
+                CONF.libvirt.virt_type, vol)
             self.volume_driver_method('connect_volume',
                                       connection_info,
                                       disk_info)
@@ -4295,7 +4368,8 @@ class LibvirtDriver(driver.ComputeDriver):
         # following normal way.
         self._fetch_instance_kernel_ramdisk(context, instance)
 
-    def post_live_migration(self, context, instance, block_device_info):
+    def post_live_migration(self, context, instance, block_device_info,
+                            migrate_data=None):
         # Disconnect from volume server
         block_device_mapping = driver.block_device_info_get_mapping(
                 block_device_info)
@@ -4325,8 +4399,8 @@ class LibvirtDriver(driver.ComputeDriver):
         if instance["name"] not in dom_list:
             # In case of block migration, destination does not have
             # libvirt.xml
-            disk_info = blockinfo.get_disk_info(CONF.libvirt_type,
-                                                instance)
+            disk_info = blockinfo.get_disk_info(
+                CONF.libvirt.virt_type, instance)
             self.to_xml(context, instance, network_info, disk_info,
                         block_device_info, write_to_disk=True)
             # libvirt.xml should be made by to_xml(), but libvirt
@@ -4624,7 +4698,7 @@ class LibvirtDriver(driver.ComputeDriver):
                               '-O', 'qcow2', info['path'], path_qcow)
                 utils.execute('mv', path_qcow, info['path'])
 
-        disk_info = blockinfo.get_disk_info(CONF.libvirt_type,
+        disk_info = blockinfo.get_disk_info(CONF.libvirt.virt_type,
                                             instance,
                                             block_device_info,
                                             image_meta)
@@ -4671,7 +4745,7 @@ class LibvirtDriver(driver.ComputeDriver):
             self._cleanup_failed_migration(inst_base)
             utils.execute('mv', inst_base_resize, inst_base)
 
-        disk_info = blockinfo.get_disk_info(CONF.libvirt_type,
+        disk_info = blockinfo.get_disk_info(CONF.libvirt.virt_type,
                                             instance,
                                             block_device_info)
         xml = self.to_xml(nova_context.get_admin_context(),
@@ -4814,15 +4888,13 @@ class LibvirtDriver(driver.ComputeDriver):
 
     def default_root_device_name(self, instance, image_meta, root_bdm):
 
-        disk_bus = blockinfo.get_disk_bus_for_device_type(CONF.libvirt_type,
-                                                          image_meta,
-                                                          "disk")
-        cdrom_bus = blockinfo.get_disk_bus_for_device_type(CONF.libvirt_type,
-                                                           image_meta,
-                                                           "cdrom")
-        root_info = blockinfo.get_root_info(CONF.libvirt_type,
-                                            image_meta, root_bdm,
-                                            disk_bus, cdrom_bus)
+        disk_bus = blockinfo.get_disk_bus_for_device_type(
+            CONF.libvirt.virt_type, image_meta, "disk")
+        cdrom_bus = blockinfo.get_disk_bus_for_device_type(
+            CONF.libvirt.virt_type, image_meta, "cdrom")
+        root_info = blockinfo.get_root_info(
+            CONF.libvirt.virt_type, image_meta, root_bdm, disk_bus,
+            cdrom_bus)
         return block_device.prepend_dev(root_info['dev'])
 
     def default_device_names_for_instance(self, instance, root_device_name,
@@ -4835,7 +4907,7 @@ class LibvirtDriver(driver.ComputeDriver):
                 nova_context.get_admin_context(),
                 bdm_id, bdm)
 
-        blockinfo.default_device_names(CONF.libvirt_type,
+        blockinfo.default_device_names(CONF.libvirt.virt_type,
                                        instance, root_device_name,
                                        _update_func,
                                        ephemerals, swap,

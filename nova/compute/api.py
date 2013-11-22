@@ -28,6 +28,7 @@ import string
 import uuid
 
 from oslo.config import cfg
+import six
 
 from nova import availability_zones
 from nova import block_device
@@ -1760,7 +1761,7 @@ class API(base.Base):
             else:
                 # Remaps are strings to translate to, or functions to call
                 # to do the translating as defined by the table above.
-                if isinstance(remap_object, basestring):
+                if isinstance(remap_object, six.string_types):
                     filters[remap_object] = value
                 else:
                     try:
@@ -2104,7 +2105,11 @@ class API(base.Base):
         reservations = self._reserve_quota_delta(context, deltas)
 
         instance.task_state = task_states.RESIZE_REVERTING
-        instance.save(expected_task_state=None)
+        try:
+            instance.save(expected_task_state=None)
+        except Exception:
+            with excutils.save_and_reraise_exception():
+                QUOTAS.rollback(context, reservations)
 
         migration.status = 'reverting'
         migration.save()

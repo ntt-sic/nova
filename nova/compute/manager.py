@@ -101,6 +101,12 @@ compute_opts = [
     cfg.StrOpt('instances_path',
                default=paths.state_path_def('instances'),
                help='where instances are stored on disk'),
+    cfg.StrOpt('image_cache_subdirectory_name',
+               default='_base',
+               help="Where cached images are stored under $instances_path."
+                    "This is NOT the full path - just a folder name."
+                    "For per-compute-host cached images, set to _base_$my_ip",
+               deprecated_name='base_dir_name'),
     cfg.BoolOpt('instance_usage_audit',
                default=False,
                help="Generate periodic compute.instance.exists notifications"),
@@ -395,9 +401,9 @@ class ComputeVirtAPI(virtapi.VirtAPI):
         return self._compute.conductor_api.agent_build_get_by_triple(
             context, hypervisor, os, architecture)
 
-    def instance_type_get(self, context, instance_type_id):
+    def flavor_get(self, context, flavor_id):
         return self._compute.conductor_api.instance_type_get(context,
-                                                             instance_type_id)
+                                                             flavor_id)
 
     def block_device_mapping_get_all_by_instance(self, context, instance,
                                                  legacy=True):
@@ -4230,7 +4236,8 @@ class ComputeManager(manager.SchedulerDependentManager):
         # Cleanup source host post live-migration
         block_device_info = self._get_instance_volume_block_device_info(
                             ctxt, instance_ref)
-        self.driver.post_live_migration(ctxt, instance_ref, block_device_info)
+        self.driver.post_live_migration(ctxt, instance_ref, block_device_info,
+                                        migrate_data)
 
         # Detaching volumes.
         connector = self.driver.get_volume_connector(instance_ref)

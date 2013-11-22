@@ -4557,7 +4557,7 @@ class ComputeTestCase(BaseTestCase):
             self.compute._post_live_migration(c, inst_ref, dest)
 
             post_live_migration.assert_has_calls([
-                mock.call(c, inst_ref, {'block_device_mapping': []})])
+                mock.call(c, inst_ref, {'block_device_mapping': []}, None)])
             unfilter_instance.assert_has_calls([mock.call(inst_ref, [])])
             migration = {'source_compute': srchost,
                          'dest_compute': dest, }
@@ -7375,10 +7375,6 @@ class ComputeAPITestCase(BaseTestCase):
             return {'id': volume_id, 'status': 'attaching'}
 
         self.stubs.Set(cinder.API, 'get', fake_volume_get)
-
-        volume = {'id': 'bf0b6b00-a20c-11e2-9e96-0800200c9a66',
-                  'state': 'active', 'instance_uuid': instance['uuid']}
-
         self.assertRaises(exception.InvalidVolume,
                 self.compute_api.rescue, self.context, instance)
 

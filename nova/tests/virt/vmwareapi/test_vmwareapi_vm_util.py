@@ -80,7 +80,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         fake_objects.add_object(fake.Datastore("openstack-ds2"))
         result = vm_util.get_datastore_ref_and_name(
             fake_session(fake_objects), None, None, datastore_valid_regex)
-        self.assertNotEquals("openstack-ds1", result[1])
+        self.assertNotEqual("openstack-ds1", result[1])
 
     def test_get_datastore_ref_and_name_with_regex_error(self):
         # Test with a regex that has no match
@@ -377,3 +377,23 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         self.assertTrue(hasattr(propdict['some.thing'], 'value'))
         self.assertEqual("else", propdict['some.thing'].value)
         self.assertEqual("value", propdict['another.thing'])
+
+    def _test_detach_virtual_disk_spec(self, destroy_disk=False):
+        virtual_device_config = vm_util.detach_virtual_disk_spec(
+                                                     fake.FakeFactory(),
+                                                     'fake_device',
+                                                     destroy_disk)
+        self.assertEqual('remove', virtual_device_config.operation)
+        self.assertEqual('fake_device', virtual_device_config.device)
+        self.assertEqual('ns0:VirtualDeviceConfigSpec',
+                         virtual_device_config.obj_name)
+        if destroy_disk:
+            self.assertEqual('destroy', virtual_device_config.fileOperation)
+        else:
+            self.assertFalse(hasattr(virtual_device_config, 'fileOperation'))
+
+    def test_detach_virtual_disk_spec(self):
+        self._test_detach_virtual_disk_spec(destroy_disk=False)
+
+    def test_detach_virtual_disk_destroy_spec(self):
+        self._test_detach_virtual_disk_spec(destroy_disk=True)
