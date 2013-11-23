@@ -593,7 +593,7 @@ class API(base.Base):
             raise exception.ImageNotActive(image_id=image_id)
 
         if instance_type['memory_mb'] < int(image.get('min_ram') or 0):
-            raise exception.InstanceTypeMemoryTooSmall()
+            raise exception.FlavorMemoryTooSmall()
 
         # NOTE(johannes): root_gb is allowed to be 0 for legacy reasons
         # since libvirt interpreted the value differently than other
@@ -601,20 +601,30 @@ class API(base.Base):
         root_gb = instance_type['root_gb']
         if root_gb:
             if int(image.get('size') or 0) > root_gb * (1024 ** 3):
-                raise exception.InstanceTypeDiskTooSmall()
+                raise exception.FlavorDiskTooSmall()
 
             if int(image.get('min_disk') or 0) > root_gb:
-                    raise exception.InstanceTypeDiskTooSmall()
+                    raise exception.FlavorDiskTooSmall()
 
-    def _check_and_transform_bdm(self, base_options, min_count, max_count,
-                                 block_device_mapping, legacy_bdm):
+    def _check_and_transform_bdm(self, base_options, image_meta, min_count,
+                                 max_count, block_device_mapping, legacy_bdm):
+        # NOTE (ndipanov): Assume root dev name is 'vda' if not supplied.
+        #                  It's needed for legacy conversion to work.
+        root_device_name = (base_options.get('root_device_name') or 'vda')
+        image_ref = base_options.get('image_ref', '')
+
+        # Get the block device mappings defined by the image.
+        image_defined_bdms = \
+            image_meta.get('properties', {}).get('block_device_mapping', [])
+
         if legacy_bdm:
-            # NOTE (ndipanov): Assume root dev name is 'vda' if not supplied.
-            #                  It's needed for legacy conversion to work.
-            root_device_name = (base_options.get('root_device_name') or 'vda')
+            block_device_mapping += image_defined_bdms
             block_device_mapping = block_device.from_legacy_mapping(
-                block_device_mapping, base_options.get('image_ref', ''),
-                root_device_name)
+                 block_device_mapping, image_ref, root_device_name)
+        elif image_defined_bdms:
+            # NOTE (ndipanov): For now assume that image mapping is legacy
+            block_device_mapping += block_device.from_legacy_mapping(
+                image_defined_bdms, None, root_device_name)
 
         if min_count > 1 or max_count > 1:
             if any(map(lambda bdm: bdm['source_type'] == 'volume',
@@ -666,8 +676,7 @@ class API(base.Base):
                 raise exception.InvalidRequest(msg)
 
         if instance_type['disabled']:
-            raise exception.InstanceTypeNotFound(
-                    instance_type_id=instance_type['id'])
+            raise exception.FlavorNotFound(flavor_id=instance_type['id'])
 
         if user_data:
             l = len(user_data)
@@ -875,7 +884,7 @@ class API(base.Base):
                 block_device_mapping, auto_disk_config, reservation_id)
 
         block_device_mapping = self._check_and_transform_bdm(
-            base_options, min_count, max_count,
+            base_options, boot_meta, min_count, max_count,
             block_device_mapping, legacy_bdm)
 
         instances = self._provision_instances(context, instance_type,
@@ -1044,15 +1053,10 @@ class API(base.Base):
             image_mapping = self._prepare_image_mapping(instance_type,
                                                 instance_uuid, image_mapping)
 
-        # NOTE (ndipanov): For now assume that image mapping is legacy
-        image_bdm = block_device.from_legacy_mapping(
-            image_properties.get('block_device_mapping', []),
-            None, instance['root_device_name'])
-
         self._validate_bdm(context, instance, instance_type,
-                           block_device_mapping + image_mapping + image_bdm)
+                           block_device_mapping + image_mapping)
 
-        for mapping in (image_mapping, image_bdm, block_device_mapping):
+        for mapping in (image_mapping, block_device_mapping):
             if not mapping:
                 continue
             self._update_block_device_mapping(context,
@@ -1472,9 +1476,8 @@ class API(base.Base):
                 old_inst_type_id = migration.old_instance_type_id
                 try:
                     old_inst_type = flavors.get_flavor(old_inst_type_id)
-                except exception.InstanceTypeNotFound:
-                    LOG.warning(_("instance type %d not found"),
-                                old_inst_type_id)
+                except exception.FlavorNotFound:
+                    LOG.warning(_("Flavor %d not found"), old_inst_type_id)
                     pass
                 else:
                     instance_vcpus = old_inst_type['vcpus']
@@ -1721,9 +1724,6 @@ class API(base.Base):
         if search_opts is None:
             search_opts = {}
 
-        if 'all_tenants' in search_opts:
-            check_policy(context, "get_all_tenants", target)
-
         LOG.debug(_("Searching by: %s") % str(search_opts))
 
         # Fixups for the DB call
@@ -1917,12 +1917,18 @@ class API(base.Base):
             properties['root_device_name'] = instance['root_device_name']
         properties.update(extra_properties or {})
 
+        # TODO(xqueralt): Use new style BDM in volume snapshots
         bdms = self.get_instance_bdms(context, instance)
 
         mapping = []
         for bdm in bdms:
             if bdm['no_device']:
                 continue
+
+            # Clean the BDM of the database related fields to prevent
+            # duplicates in the future (e.g. the id was being preserved)
+            for field in block_device.BlockDeviceDict._db_only_fields:
+                bdm.pop(field, None)
 
             volume_id = bdm.get('volume_id')
             if volume_id:
@@ -1935,7 +1941,11 @@ class API(base.Base):
                 snapshot = self.volume_api.create_snapshot_force(
                     context, volume['id'], name, volume['display_description'])
                 bdm['snapshot_id'] = snapshot['id']
-                bdm['volume_id'] = None
+
+                # Clean the extra volume related fields that will be generated
+                # when booting from the new snapshot.
+                bdm.pop('volume_id')
+                bdm.pop('connection_info')
 
             mapping.append(bdm)
 
@@ -2284,7 +2294,6 @@ class API(base.Base):
                    'new_instance_type_name': new_instance_type_name},
                   instance=instance)
 
-        # FIXME(sirp): both of these should raise InstanceTypeNotFound instead
         if not new_instance_type:
             raise exception.FlavorNotFound(flavor_id=flavor_id)
 

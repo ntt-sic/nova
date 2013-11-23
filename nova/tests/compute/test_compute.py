@@ -1404,6 +1404,20 @@ class ComputeTestCase(BaseTestCase):
         self.compute.run_instance(self.context, instance)
         self.assertIn('instance_update', called)
 
+    def test_run_instance_bails_on_deleting_instance(self):
+        # Make sure that run_instance() will quickly ignore a deleting instance
+        called = {}
+        instance = self._create_fake_instance()
+
+        def fake_instance_update(self, *a, **args):
+            called['instance_update'] = True
+            raise exception.UnexpectedDeletingTaskStateError(
+                expected='scheduling', actual='deleting')
+        self.stubs.Set(self.compute, '_instance_update', fake_instance_update)
+
+        self.compute.run_instance(self.context, instance)
+        self.assertIn('instance_update', called)
+
     def test_run_instance_bails_on_missing_instance_2(self):
         # Make sure that run_instance() will quickly ignore a deleted instance
         called = {}
@@ -2190,6 +2204,39 @@ class ComputeTestCase(BaseTestCase):
     def test_reboot_fail_running(self):
         self._test_reboot(False, fail_reboot=True,
                           fail_running=True)
+
+    def test_get_instance_volume_block_device_info_source_image(self):
+        def _fake_get_instance_volume_bdms(context, instance, legacy=True):
+            bdms = [{
+                'id': 3,
+                'volume_id': u'4cbc9e62-6ba0-45dd-b647-934942ead7d6',
+                'instance_uuid': 'fake-instance',
+                'device_name': '/dev/vda',
+                'connection_info': '{"driver_volume_type": "rbd"}',
+                'source_type': 'image',
+                'destination_type': 'volume',
+                'image_id': 'fake-image-id-1',
+                'boot_index': 0
+            }]
+
+            return bdms
+
+        with mock.patch.object(self.compute, '_get_instance_volume_bdms',
+                               _fake_get_instance_volume_bdms):
+            block_device_info = (
+                self.compute._get_instance_volume_block_device_info(
+                    self.context, self._create_fake_instance())
+            )
+            expected = {
+                'block_device_mapping': [{
+                    'connection_info': {
+                        'driver_volume_type': 'rbd'
+                    },
+                    'mount_device': '/dev/vda',
+                    'delete_on_termination': None
+                }]
+            }
+            self.assertEqual(block_device_info, expected)
 
     def test_set_admin_password(self):
         # Ensure instance can have its admin password set.
@@ -5420,24 +5467,21 @@ class ComputeTestCase(BaseTestCase):
 
     def test_complete_partial_deletion(self):
         admin_context = context.get_admin_context()
-        instance = {
-            'id': '1',
-            'vm_state': vm_states.DELETED,
-            'task_state': None,
-            'system_metadata': [{'key': 'fake_key', 'value': 'fake_value'}],
-            'vcpus': 1,
-            'memory_mb': 1,
-            'project_id': 'fake-prj',
-            'user_id': 'fake-user',
-            'deleted': 0
-            }
+        instance = instance_obj.Instance()
+        instance.id = 1
+        instance.vm_state = vm_states.DELETED
+        instance.task_state = None
+        instance.system_metadata = {'fake_key': 'fake_value'}
+        instance.vcpus = 1
+        instance.memory_mb = 1
+        instance.project_id = 'fake-prj'
+        instance.user_id = 'fake-user'
+        instance.deleted = False
 
-        def fake_conductor(context, instance):
-            instance['deleted'] = instance['id']
+        def fake_destroy():
+            instance.deleted = True
 
-        self.stubs.Set(self.compute.conductor_api,
-                       'instance_destroy',
-                        fake_conductor)
+        self.stubs.Set(instance, 'destroy', fake_destroy)
 
         self.stubs.Set(self.compute,
                        '_get_instance_volume_bdms',
@@ -5451,14 +5495,14 @@ class ComputeTestCase(BaseTestCase):
 
         self.compute._complete_partial_deletion(admin_context, instance)
 
-        self.assertFalse(instance['deleted'] == 0)
+        self.assertFalse(instance.deleted == 0)
 
     def test_init_instance_for_partial_deletion(self):
         admin_context = context.get_admin_context()
-        instance = {'id': '1',
-                    'vm_state': vm_states.DELETED,
-                    'deleted': 0
-                    }
+        instance = instance_obj.Instance(admin_context)
+        instance.id = 1
+        instance.vm_state = vm_states.DELETED
+        instance.deleted = False
 
         def fake_partial_deletion(context, instance):
             instance['deleted'] = instance['id']
@@ -5472,10 +5516,11 @@ class ComputeTestCase(BaseTestCase):
 
     def test_partial_deletion_raise_exception(self):
         admin_context = context.get_admin_context()
-        instance = {'id': '1',
-                    'vm_state': vm_states.DELETED,
-                    'deleted': 0
-                    }
+        instance = instance_obj.Instance(admin_context)
+        instance.id = 1
+        instance.vm_state = vm_states.DELETED
+        instance.deleted = False
+
         self.mox.StubOutWithMock(self.compute, '_complete_partial_deletion')
         self.compute._complete_partial_deletion(
                                  admin_context, instance).AndRaise(ValueError)
@@ -5836,7 +5881,7 @@ class ComputeAPITestCase(BaseTestCase):
         self.fake_image['min_ram'] = 2
         self.stubs.Set(fake_image._FakeImageService, 'show', self.fake_show)
 
-        self.assertRaises(exception.InstanceTypeMemoryTooSmall,
+        self.assertRaises(exception.FlavorMemoryTooSmall,
             self.compute_api.create, self.context,
             inst_type, self.fake_image['id'])
 
@@ -5855,7 +5900,7 @@ class ComputeAPITestCase(BaseTestCase):
         self.fake_image['min_disk'] = 2
         self.stubs.Set(fake_image._FakeImageService, 'show', self.fake_show)
 
-        self.assertRaises(exception.InstanceTypeDiskTooSmall,
+        self.assertRaises(exception.FlavorDiskTooSmall,
             self.compute_api.create, self.context,
             inst_type, self.fake_image['id'])
 
@@ -5875,7 +5920,7 @@ class ComputeAPITestCase(BaseTestCase):
 
         self.stubs.Set(fake_image._FakeImageService, 'show', self.fake_show)
 
-        self.assertRaises(exception.InstanceTypeDiskTooSmall,
+        self.assertRaises(exception.FlavorDiskTooSmall,
             self.compute_api.create, self.context,
             inst_type, self.fake_image['id'])
 
@@ -6284,7 +6329,7 @@ class ComputeAPITestCase(BaseTestCase):
         self.fake_image['min_ram'] = 128
         self.stubs.Set(fake_image._FakeImageService, 'show', self.fake_show)
 
-        self.assertRaises(exception.InstanceTypeMemoryTooSmall,
+        self.assertRaises(exception.FlavorMemoryTooSmall,
             self.compute_api.rebuild, self.context,
             instance, self.fake_image['id'], 'new_password')
 
@@ -6308,7 +6353,7 @@ class ComputeAPITestCase(BaseTestCase):
         self.fake_image['min_disk'] = 2
         self.stubs.Set(fake_image._FakeImageService, 'show', self.fake_show)
 
-        self.assertRaises(exception.InstanceTypeDiskTooSmall,
+        self.assertRaises(exception.FlavorDiskTooSmall,
             self.compute_api.rebuild, self.context,
             instance, self.fake_image['id'], 'new_password')
 
@@ -6365,7 +6410,7 @@ class ComputeAPITestCase(BaseTestCase):
         self.fake_image['size'] = '1073741825'
         self.stubs.Set(fake_image._FakeImageService, 'show', self.fake_show)
 
-        self.assertRaises(exception.InstanceTypeDiskTooSmall,
+        self.assertRaises(exception.FlavorDiskTooSmall,
             self.compute_api.rebuild, self.context,
             instance, self.fake_image['id'], 'new_password')
 
@@ -7114,24 +7159,33 @@ class ComputeAPITestCase(BaseTestCase):
              'volume_id': '33333333-aaaa-bbbb-cccc-333333333333',
              'delete_on_termination': False}]
 
+        image_meta = {'properties': {'block_device_mapping': [
+            {'device_name': '/dev/vda',
+             'snapshot_id': '33333333-aaaa-bbbb-cccc-333333333333'}]}}
+
         # We get an image BDM
         transformed_bdm = self.compute_api._check_and_transform_bdm(
-            base_options, 1, 1, fake_legacy_bdms, True)
+            base_options, {}, 1, 1, fake_legacy_bdms, True)
         self.assertEqual(len(transformed_bdm), 2)
 
-        # No image BDM created
+        # No image BDM created if image already defines a root BDM
         base_options['root_device_name'] = 'vda'
         transformed_bdm = self.compute_api._check_and_transform_bdm(
-            base_options, 1, 1, fake_legacy_bdms, True)
+            base_options, image_meta, 1, 1, [], True)
+        self.assertEqual(len(transformed_bdm), 1)
+
+        # No image BDM created
+        transformed_bdm = self.compute_api._check_and_transform_bdm(
+            base_options, {}, 1, 1, fake_legacy_bdms, True)
         self.assertEqual(len(transformed_bdm), 1)
 
         # Volumes with multiple instances fails
         self.assertRaises(exception.InvalidRequest,
             self.compute_api._check_and_transform_bdm,
-            base_options, 1, 2, fake_legacy_bdms, True)
+            base_options, {}, 1, 2, fake_legacy_bdms, True)
 
         checked_bdm = self.compute_api._check_and_transform_bdm(
-            base_options, 1, 1, transformed_bdm, True)
+            base_options, {}, 1, 1, transformed_bdm, True)
         self.assertEqual(checked_bdm, transformed_bdm)
 
     def test_volume_size(self):
@@ -8642,13 +8696,13 @@ class DisabledInstanceTypesTestCase(BaseTestCase):
 
     def test_can_build_instance_from_visible_instance_type(self):
         self.inst_type['disabled'] = False
-        # Assert that exception.InstanceTypeNotFound is not raised
+        # Assert that exception.FlavorNotFound is not raised
         self.compute_api.create(self.context, self.inst_type,
                                 image_href='some-fake-image')
 
     def test_cannot_build_instance_from_disabled_instance_type(self):
         self.inst_type['disabled'] = True
-        self.assertRaises(exception.InstanceTypeNotFound,
+        self.assertRaises(exception.FlavorNotFound,
             self.compute_api.create, self.context, self.inst_type, None)
 
     def test_can_resize_to_visible_instance_type(self):
@@ -8667,9 +8721,6 @@ class DisabledInstanceTypesTestCase(BaseTestCase):
         self.stubs.Set(flavors, 'get_flavor_by_flavor_id',
                        fake_get_flavor_by_flavor_id)
 
-        # FIXME(sirp): for legacy this raises FlavorNotFound instead of
-        # InstanceTypeNotFound; we should eventually make it raise
-        # InstanceTypeNotFound for consistency.
         self._stub_migrate_server()
         self.compute_api.resize(self.context, instance, '4')
 
@@ -8689,9 +8740,6 @@ class DisabledInstanceTypesTestCase(BaseTestCase):
         self.stubs.Set(flavors, 'get_flavor_by_flavor_id',
                        fake_get_flavor_by_flavor_id)
 
-        # FIXME(sirp): for legacy this raises FlavorNotFound instead of
-        # InstanceTypeNot; we should eventually make it raise
-        # InstanceTypeNotFound for consistency.
         self.assertRaises(exception.FlavorNotFound,
             self.compute_api.resize, self.context, instance, '4')
 
@@ -8946,8 +8994,8 @@ class ComputeRescheduleOrErrorTestCase(BaseTestCase):
         self.mox.StubOutWithMock(self.compute, '_spawn')
         self.mox.StubOutWithMock(self.compute, '_reschedule_or_error')
 
-        exc = exception.UnexpectedTaskStateError(expected=task_states.SPAWNING,
-                actual=task_states.DELETING)
+        exc = exception.UnexpectedDeletingTaskStateError(
+                expected=task_states.SPAWNING, actual=task_states.DELETING)
         self.compute._spawn(mox.IgnoreArg(), self.instance, mox.IgnoreArg(),
                 mox.IgnoreArg(), mox.IgnoreArg(), mox.IgnoreArg(),
                 mox.IgnoreArg(), set_access_ip=False).AndRaise(exc)
@@ -9434,7 +9482,7 @@ class CheckRequestedImageTestCase(test.TestCase):
     def test_image_min_ram_check(self):
         image = dict(id='123', status='active', min_ram='65')
 
-        self.assertRaises(exception.InstanceTypeMemoryTooSmall,
+        self.assertRaises(exception.FlavorMemoryTooSmall,
                 self.compute_api._check_requested_image, self.context,
                 image['id'], image, self.instance_type)
 
@@ -9445,7 +9493,7 @@ class CheckRequestedImageTestCase(test.TestCase):
     def test_image_min_disk_check(self):
         image = dict(id='123', status='active', min_disk='2')
 
-        self.assertRaises(exception.InstanceTypeDiskTooSmall,
+        self.assertRaises(exception.FlavorDiskTooSmall,
                 self.compute_api._check_requested_image, self.context,
                 image['id'], image, self.instance_type)
 
@@ -9456,7 +9504,7 @@ class CheckRequestedImageTestCase(test.TestCase):
     def test_image_too_large(self):
         image = dict(id='123', status='active', size='1073741825')
 
-        self.assertRaises(exception.InstanceTypeDiskTooSmall,
+        self.assertRaises(exception.FlavorDiskTooSmall,
                 self.compute_api._check_requested_image, self.context,
                 image['id'], image, self.instance_type)
 
