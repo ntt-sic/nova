@@ -33,6 +33,7 @@ import six
 from nova import availability_zones
 from nova import block_device
 from nova.cells import opts as cells_opts
+from nova.compute.flows import delete_server
 from nova.compute import flavors
 from nova.compute import instance_actions
 from nova.compute import power_state
@@ -1300,109 +1301,8 @@ class API(base.Base):
                      instance=instance)
             return
 
-        host = instance['host']
-        bdms = block_device.legacy_mapping(
-                    self.db.block_device_mapping_get_all_by_instance(
-                    context, instance['uuid']))
-        reservations = None
-
-        if context.is_admin and context.project_id != instance['project_id']:
-            project_id = instance['project_id']
-        else:
-            project_id = context.project_id
-        if context.user_id != instance['user_id']:
-            user_id = instance['user_id']
-        else:
-            user_id = context.user_id
-
-        try:
-            # NOTE(maoy): no expected_task_state needs to be set
-            instance.update(instance_attrs)
-            instance.progress = 0
-            instance.save()
-            new_type_id = instance.instance_type_id
-
-            # NOTE(comstud): If we delete the instance locally, we'll
-            # commit the reservations here.  Otherwise, the manager side
-            # will commit or rollback the reservations based on success.
-            reservations = self._create_reservations(context,
-                                                     instance,
-                                                     new_type_id,
-                                                     project_id, user_id)
-
-            if self.cell_type == 'api':
-                # NOTE(comstud): If we're in the API cell, we need to
-                # skip all remaining logic and just call the callback,
-                # which will cause a cast to the child cell.  Also,
-                # commit reservations here early until we have a better
-                # way to deal with quotas with cells.
-                cb(context, instance, bdms, reservations=None)
-                if reservations:
-                    QUOTAS.commit(context,
-                                  reservations,
-                                  project_id=project_id,
-                                  user_id=user_id)
-                return
-
-            if not host:
-                try:
-                    compute_utils.notify_about_instance_usage(
-                            self.notifier, context, instance,
-                            "%s.start" % delete_type)
-                    instance.destroy()
-                    compute_utils.notify_about_instance_usage(
-                            self.notifier, context, instance,
-                            "%s.end" % delete_type,
-                            system_metadata=instance.system_metadata)
-                    if reservations:
-                        QUOTAS.commit(context,
-                                      reservations,
-                                      project_id=project_id,
-                                      user_id=user_id)
-                    return
-                except exception.ObjectActionError:
-                    instance.refresh()
-
-            if instance['vm_state'] == vm_states.RESIZED:
-                self._confirm_resize_on_deleting(context, instance)
-
-            is_up = False
-            try:
-                service = service_obj.Service.get_by_compute_host(
-                    context.elevated(), instance.host)
-                if self.servicegroup_api.service_is_up(service):
-                    is_up = True
-
-                    self._record_action_start(context, instance,
-                                              instance_actions.DELETE)
-
-                    cb(context, instance, bdms, reservations=reservations)
-            except exception.ComputeHostNotFound:
-                pass
-
-            if not is_up:
-                # If compute node isn't up, just delete from DB
-                self._local_delete(context, instance, bdms, delete_type, cb)
-                if reservations:
-                    QUOTAS.commit(context,
-                                  reservations,
-                                  project_id=project_id,
-                                  user_id=user_id)
-                    reservations = None
-        except exception.InstanceNotFound:
-            # NOTE(comstud): Race condition. Instance already gone.
-            if reservations:
-                QUOTAS.rollback(context,
-                                reservations,
-                                project_id=project_id,
-                                user_id=user_id)
-        except Exception:
-            with excutils.save_and_reraise_exception():
-                if reservations:
-                    QUOTAS.rollback(context,
-                                    reservations,
-                                    project_id=project_id,
-                                    user_id=user_id)
+        delete_server.api_flow(self, context, instance, delete_type,
+                               cb, instance_attrs)
 
     def _confirm_resize_on_deleting(self, context, instance):
         # If in the middle of a resize, use confirm_resize to
