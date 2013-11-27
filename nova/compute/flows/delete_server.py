@@ -35,8 +35,13 @@ from nova.compute import utils as compute_utils
 from nova.compute import vm_states
 from nova.openstack.common import excutils
 from nova.openstack.common import log as logging
+from nova.openstack.common import timeutils
+from nova.objects import base as obj_base
+from nova.objects import instance as instance_obj
+from nova.objects import quotas as quotas_obj
 from nova.objects import service as service_obj
 from nova import quota
+from nova import utils
 
 
 LOG = logging.getLogger(__name__)
@@ -159,19 +164,90 @@ class DeleteServerAPITask(task.Task):
                                     user_id=user_id)
 
 
-def create_flow(nova_api, context, instance, delete_type, cb, instance_attrs):
-    flow = lf.Flow("delete_vm")
-    flow.add(
-            DeleteServerAPITask(nova_api, context, instance, delete_type,
-                                cb, instance_attrs),
-        ),
-    return flow
+class DeleteServerManagerTask(task.Task):
+    """Delete Server."""
+    def __init__(self, nova_cpu, context, instance, bdms, reservations):
+        super(DeleteServerManagerTask, self).__init__()
+        self.nova_cpu = nova_cpu
+        self.context = context
+        self.instance = instance
+        self.bdms =bdms
+        self.reservations = reservations
+
+    def execute(self):
+        instance_uuid = self.instance['uuid']
+        image = self.instance['image_ref']
+
+        if self.context.is_admin and self.context.project_id != self.instance['project_id']:
+            project_id = self.instance['project_id']
+        else:
+            project_id = self.context.project_id
+        if self.context.user_id != self.instance['user_id']:
+            user_id = self.instance['user_id']
+        else:
+            user_id = self.context.user_id
+
+        was_soft_deleted = self.instance['vm_state'] == vm_states.SOFT_DELETED
+        if was_soft_deleted:
+            # Instances in SOFT_DELETED vm_state have already had quotas
+            # decremented.
+            try:
+                self.nova_cpu._quota_rollback(self.context, self.reservations,
+                                     project_id=project_id,
+                                     user_id=user_id)
+            except Exception:
+                pass
+            self.reservations = None
+
+        try:
+            db_inst = obj_base.obj_to_primitive(self.instance)
+            self.nova_cpu.conductor_api.instance_info_cache_delete(self.context, db_inst)
+            self.nova_cpu._notify_about_instance_usage(self.context, self.instance,
+                                              "delete.start")
+            self.nova_cpu._shutdown_instance(self.context, db_inst, self.bdms)
+            # NOTE(vish): We have already deleted the instance, so we have
+            #             to ignore problems cleaning up the volumes. It
+            #             would be nice to let the user know somehow that
+            #             the volume deletion failed, but it is not
+            #             acceptable to have an instance that can not be
+            #             deleted. Perhaps this could be reworked in the
+            #             future to set an instance fault the first time
+            #             and to only ignore the failure if the instance
+            #             is already in ERROR.
+            try:
+                self.nova_cpu._cleanup_volumes(self.context, instance_uuid, self.bdms)
+            except Exception as exc:
+                err_str = _("Ignoring volume cleanup failure due to %s")
+                LOG.warn(err_str % exc, instance=self.instance)
+            # if a delete task succeed, always update vm state and task
+            # state without expecting task state to be DELETING
+            self.instance.vm_state = vm_states.DELETED
+            self.instance.task_state = None
+            self.instance.terminated_at = timeutils.utcnow()
+            self.instance.save()
+            system_meta = utils.instance_sys_meta(self.instance)
+            db_inst = self.nova_cpu.conductor_api.instance_destroy(
+                self.context, obj_base.obj_to_primitive(self.instance))
+            instance = instance_obj.Instance._from_db_object(self.context,
+                                                             self.instance,
+                                                             db_inst)
+        except Exception:
+            with excutils.save_and_reraise_exception():
+                self.nova_cpu._quota_rollback(self.context, self.reservations,
+                                     project_id=project_id,
+                                     user_id=user_id)
+
+        quotas = quotas_obj.Quotas.from_reservations(self.context,
+                                                     self.reservations,
+                                                     instance=instance)
+        self.nova_cpu._complete_deletion(self.context,
+                                instance,
+                                self.bdms,
+                                quotas,
+                                system_meta)
 
 
-def api_flow(nova_api, context, instance, delete_type, cb, instance_attrs):
-
-    import pdb; pdb.set_trace()
-
+def get_engine_config():
     backend_config = {
         'connection': CONF.backend,
     }
@@ -182,11 +258,45 @@ def api_flow(nova_api, context, instance, delete_type, cb, instance_attrs):
     engine_config = {
         'backend': backend_config,
         'engine_conf': 'serial',
-        'book': logbook.LogBook("my-test"),
+        'book': logbook.LogBook("delete-vm-api"),
     }
 
-    flow = create_flow(nova_api, context, instance, delete_type, cb,
+    return engine_config
+
+
+def create_api_flow(nova_api, context, instance, delete_type, cb, instance_attrs):
+    flow = lf.Flow("delete-vm-api")
+    flow.add(
+            DeleteServerAPITask(nova_api, context, instance, delete_type,
+                                cb, instance_attrs),
+        ),
+    return flow
+
+
+def create_manager_flow(nova_cpu, context, instance, bdms, reservations):
+    flow = lf.Flow("delete-vm-mgr")
+    flow.add(
+            DeleteServerManagerTask(nova_cpu, context, instance, bdms, reservations),
+        ),
+    return flow
+
+
+def api_flow(nova_api, context, instance, delete_type, cb, instance_attrs):
+
+    import pdb; pdb.set_trace()
+
+    flow = create_api_flow(nova_api, context, instance, delete_type, cb,
                                                    instance_attrs)
+    engine_config = get_engine_config()
+    engine = engines.load(flow, **engine_config)
+    engine.run()
+    return engine
+
+
+def manager_flow(nova_cpu, context, instance, bdms, reservations):
+
+    flow = create_manager_flow(nova_cpu, context, instance, bdms, reservations)
+    engine_config = get_engine_config()
     engine = engines.load(flow, **engine_config)
     engine.run()
     return engine

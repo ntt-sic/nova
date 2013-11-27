@@ -44,6 +44,7 @@ from nova.cells import rpcapi as cells_rpcapi
 from nova.cloudpipe import pipelib
 from nova import compute
 from nova.compute import flavors
+from nova.compute.flows import delete_server
 from nova.compute import power_state
 from nova.compute import resource_tracker
 from nova.compute import rpcapi as compute_rpcapi
@@ -1887,75 +1888,7 @@ class ComputeManager(manager.SchedulerDependentManager):
         """Delete an instance on this host.  Commit or rollback quotas
         as necessary.
         """
-        instance_uuid = instance['uuid']
-        image = instance['image_ref']
-
-        if context.is_admin and context.project_id != instance['project_id']:
-            project_id = instance['project_id']
-        else:
-            project_id = context.project_id
-        if context.user_id != instance['user_id']:
-            user_id = instance['user_id']
-        else:
-            user_id = context.user_id
-
-        was_soft_deleted = instance['vm_state'] == vm_states.SOFT_DELETED
-        if was_soft_deleted:
-            # Instances in SOFT_DELETED vm_state have already had quotas
-            # decremented.
-            try:
-                self._quota_rollback(context, reservations,
-                                     project_id=project_id,
-                                     user_id=user_id)
-            except Exception:
-                pass
-            reservations = None
-
-        try:
-            db_inst = obj_base.obj_to_primitive(instance)
-            self.conductor_api.instance_info_cache_delete(context, db_inst)
-            self._notify_about_instance_usage(context, instance,
-                                              "delete.start")
-            self._shutdown_instance(context, db_inst, bdms)
-            # NOTE(vish): We have already deleted the instance, so we have
-            #             to ignore problems cleaning up the volumes. It
-            #             would be nice to let the user know somehow that
-            #             the volume deletion failed, but it is not
-            #             acceptable to have an instance that can not be
-            #             deleted. Perhaps this could be reworked in the
-            #             future to set an instance fault the first time
-            #             and to only ignore the failure if the instance
-            #             is already in ERROR.
-            try:
-                self._cleanup_volumes(context, instance_uuid, bdms)
-            except Exception as exc:
-                err_str = _("Ignoring volume cleanup failure due to %s")
-                LOG.warn(err_str % exc, instance=instance)
-            # if a delete task succeed, always update vm state and task
-            # state without expecting task state to be DELETING
-            instance.vm_state = vm_states.DELETED
-            instance.task_state = None
-            instance.terminated_at = timeutils.utcnow()
-            instance.save()
-            system_meta = utils.instance_sys_meta(instance)
-            db_inst = self.conductor_api.instance_destroy(
-                context, obj_base.obj_to_primitive(instance))
-            instance = instance_obj.Instance._from_db_object(context, instance,
-                                                             db_inst)
-        except Exception:
-            with excutils.save_and_reraise_exception():
-                self._quota_rollback(context, reservations,
-                                     project_id=project_id,
-                                     user_id=user_id)
-
-        quotas = quotas_obj.Quotas.from_reservations(context,
-                                                     reservations,
-                                                     instance=instance)
-        self._complete_deletion(context,
-                                instance,
-                                bdms,
-                                quotas,
-                                system_meta)
+        delete_server.manager_flow(self, context, instance, bdms, reservations)
 
     @object_compat
     @wrap_exception()
