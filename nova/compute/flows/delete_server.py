@@ -247,7 +247,7 @@ class DeleteServerManagerTask(task.Task):
                                 system_meta)
 
 
-def get_engine_config():
+def get_engine_config(correlation_id):
     backend_config = {
         'connection': CONF.backend,
     }
@@ -259,6 +259,7 @@ def get_engine_config():
         'backend': backend_config,
         'engine_conf': 'serial',
         'book': logbook.LogBook("delete-vm"),
+        'meta': {'correlation_id': correlation_id}
     }
 
     return engine_config
@@ -286,7 +287,7 @@ def api_flow(nova_api, context, instance, delete_type, cb, instance_attrs):
 
     flow = create_api_flow(nova_api, context, instance, delete_type, cb,
                                                    instance_attrs)
-    engine_config = get_engine_config()
+    engine_config = get_engine_config(context.correlation_id)
     engine = engines.load(flow, **engine_config)
     engine.run()
     return engine
@@ -295,7 +296,7 @@ def api_flow(nova_api, context, instance, delete_type, cb, instance_attrs):
 def manager_flow(nova_cpu, context, instance, bdms, reservations):
 
     flow = create_manager_flow(nova_cpu, context, instance, bdms, reservations)
-    engine_config = get_engine_config()
+    engine_config = get_engine_config(context.correlation_id)
     engine = engines.load(flow, **engine_config)
     engine.run()
     return engine
