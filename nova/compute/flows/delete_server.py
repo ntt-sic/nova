@@ -258,13 +258,14 @@ def get_engine_config():
     engine_config = {
         'backend': backend_config,
         'engine_conf': 'serial',
-        'book': logbook.LogBook("delete-vm-api"),
+        'book': logbook.LogBook("delete-vm"),
     }
 
     return engine_config
 
 
 def create_api_flow(nova_api, context, instance, delete_type, cb, instance_attrs):
+    import pdb; pdb.set_trace()
     flow = lf.Flow("delete-vm-api")
     flow.add(
             DeleteServerAPITask(nova_api, context, instance, delete_type,
@@ -282,8 +283,6 @@ def create_manager_flow(nova_cpu, context, instance, bdms, reservations):
 
 
 def api_flow(nova_api, context, instance, delete_type, cb, instance_attrs):
-
-    import pdb; pdb.set_trace()
 
     flow = create_api_flow(nova_api, context, instance, delete_type, cb,
                                                    instance_attrs)

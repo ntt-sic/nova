@@ -113,7 +113,7 @@ generic_log_opts = [
 log_opts = [
     cfg.StrOpt('logging_context_format_string',
                default='%(asctime)s.%(msecs)03d %(process)d %(levelname)s '
-                       '%(name)s [%(request_id)s %(user)s %(tenant)s] '
+                       '%(name)s [%(context_info)s %(user)s %(tenant)s] '
                        '%(instance)s%(message)s',
                help='format string to use for log messages with context'),
     cfg.StrOpt('logging_default_format_string',
@@ -507,7 +507,8 @@ class ContextFormatter(logging.Formatter):
     """
 
     def format(self, record):
-        """Uses contextstring if request_id is set, otherwise default."""
+        """Uses contextstring if request_id is set, also use correlation_id
+        if present in the context, otherwise default."""
         # NOTE(sdague): default the fancier formating params
         # to an empty string so we don't throw an exception if
         # they get used
@@ -515,6 +516,12 @@ class ContextFormatter(logging.Formatter):
             if key not in record.__dict__:
                 record.__dict__[key] = ''
 
+        request_id = record.__dict__.get('request_id', None)
+        correlation_id = record.__dict__.get('correlation_id', None)
+
+        if request_id:
+            record.context_info = ("%s %s" % (request_id, correlation_id)
+                                   if correlation_id else request_id)
         if record.__dict__.get('request_id', None):
             self._fmt = CONF.logging_context_format_string
         else:

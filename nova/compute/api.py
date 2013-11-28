@@ -1300,7 +1300,6 @@ class API(base.Base):
             LOG.info(_('instance termination disabled'),
                      instance=instance)
             return
-
         delete_server.api_flow(self, context, instance, delete_type,
                                cb, instance_attrs)
 

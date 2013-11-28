@@ -136,6 +136,8 @@ def _create_glance_client(context, host, port, use_ssl, version=1):
         # header 'X-Auth-Token' and 'token'
         params['token'] = context.auth_token
         params['identity_headers'] = generate_identity_headers(context)
+    if context.correlation_id:
+        params['correlation_id'] = context.correlation_id
     if utils.is_valid_ipv6(host):
         #if so, it is ipv6 address, need to wrap it with '[]'
         host = '[%s]' % host

@@ -48,9 +48,10 @@ class RequestContext(object):
 
     def __init__(self, user_id, project_id, is_admin=None, read_deleted="no",
                  roles=None, remote_address=None, timestamp=None,
-                 request_id=None, auth_token=None, overwrite=True,
-                 quota_class=None, user_name=None, project_name=None,
-                 service_catalog=None, instance_lock_checked=False, **kwargs):
+                 request_id=None, auth_token=None,
+                 overwrite=True, quota_class=None, user_name=None,
+                 project_name=None, service_catalog=None,
+                 instance_lock_checked=False, correlation_id=None, **kwargs):
         """
         :param read_deleted: 'no' indicates deleted records are hidden, 'yes'
             indicates deleted records are visible, 'only' indicates that
@@ -80,6 +81,7 @@ class RequestContext(object):
             request_id = generate_request_id()
         self.request_id = request_id
         self.auth_token = auth_token
+        self.correlation_id = correlation_id
 
         if service_catalog:
             # Only include required parts of service_catalog
@@ -131,6 +133,7 @@ class RequestContext(object):
                 'timestamp': timeutils.strtime(self.timestamp),
                 'request_id': self.request_id,
                 'auth_token': self.auth_token,
+                'correlation_id': self.correlation_id,
                 'quota_class': self.quota_class,
                 'user_name': self.user_name,
                 'service_catalog': self.service_catalog,

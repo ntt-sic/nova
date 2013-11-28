@@ -83,6 +83,7 @@ class NovaKeystoneContext(wsgi.Middleware):
     def __call__(self, req):
         user_id = req.headers.get('X_USER')
         user_id = req.headers.get('X_USER_ID', user_id)
+        correlation_id = req.headers.get('X_CORRELATION_ID')
         if user_id is None:
             LOG.debug("Neither X_USER_ID nor X_USER found in request")
             return webob.exc.HTTPUnauthorized()
@@ -123,7 +124,8 @@ class NovaKeystoneContext(wsgi.Middleware):
                                      roles=roles,
                                      auth_token=auth_token,
                                      remote_address=remote_address,
-                                     service_catalog=service_catalog)
+                                     service_catalog=service_catalog,
+                                     correlation_id=correlation_id)
 
         req.environ['nova.context'] = ctx
         return self.application
