@@ -1741,6 +1741,8 @@ class API(base.Base):
         'sort_dir' parameter using the key specified in the 'sort_key'
         parameter.
         """
+        taskdetail = instance_obj.InstanceList.get_by_filters(
+                                                 context, 'RUNNING')
 
         #TODO(bcwaldon): determine the best argument for target here
         target = {

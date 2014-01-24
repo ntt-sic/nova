@@ -1410,3 +1410,57 @@ class PciDevice(BASE, NovaBase):
                             primaryjoin='and_('
                             'PciDevice.instance_uuid == Instance.uuid,'
                             'PciDevice.deleted == 0)')
+
+
+class LogBooks(BASE, NovaBase):
+     """
+     Represents logbooks of taskflow.
+     I'm a parent of flowdetails.
+     """
+     __tablename__ = 'logbooks'
+     __table_args__ = (
+          Index('logbook_uuid_idx'),
+     )
+     uuid = Column(String(64), primary_key=True, nullable=False)
+
+     meta = Column(Text)
+     name = Column(String(255))
+
+
+class FlowDetails(BASE, NovaBase):
+     """
+     Represents flowdetails of taskflow.
+     I'm a child of logbooks and a parent of taskdetails.
+     """
+     __tablename__ = 'flowdetails'
+     __table_args__ = (
+          Index('flowdetails_ibfk_1',
+                'flowdetails_uuid_idx')
+     )
+     uuid = Column(String(64), primary_key=True, nullable=False)
+
+     parent_uuid = Column(String(64))
+     meta = Column(Text)
+     state = Column(String(255))
+     name = Column(String(255))
+
+
+class TaskDetails(BASE, NovaBase):
+     """
+     Represents taskdetails of taskflow.
+     I'm a child of flowdetails.
+     """
+     __tablename__ = 'taskdetails'
+     __table_args__ = (
+          Index('taskdetails_ibfk_1',
+                'taskdetails_uuid_idx')
+     )
+     uuid = Column(String(64), primary_key=True, nullable=False)
+
+     parent_uuid = Column(String(64))
+     meta = Column(Text)
+     name = Column(String(255))
+     results = Column(Text)
+     version = Column(String(64))
+     state = Column(String(255))
+     failure = Column(Text)

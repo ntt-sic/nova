@@ -1915,3 +1915,10 @@ def archive_deleted_rows_for_table(context, tablename, max_rows=None):
     """
     return IMPL.archive_deleted_rows_for_table(context, tablename,
                                                max_rows=max_rows)
+
+
+####################
+
+
+def taskdetail_get_by_state(cotext, state):
+    return IMPL.taskdetail_get_by_state(context, state)

@@ -1494,3 +1494,7 @@ class KeyManagerError(NovaException):
 
 class InvalidVideoMode(Invalid):
     msg_fmt = _("Provided video model (%(model)s) is not supported.")
+
+
+class TaskDetailNotFoundByState(NotFound):
+    msg_fmt = _("Taskdetail match to %(state) is not found")

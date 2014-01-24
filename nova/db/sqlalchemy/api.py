@@ -6055,3 +6055,13 @@ def pci_device_update(context, node_id, address, values):
         device.update(values)
         session.add(device)
     return device
+
+
+@require_admin_context
+def taskdetail_get_by_state(context, state):
+    taskdetail_ref = model_query(context, models.TaskDetails).\
+                                 filter_by(state=state).\
+                                 first()
+    if not taskdetail_ref:
+        raise exception.TaskDetailNotFoundByState(state=state)
+    return taskdetail_ref
