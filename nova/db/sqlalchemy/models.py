@@ -1419,7 +1419,7 @@ class LogBooks(BASE, NovaBase):
      """
      __tablename__ = 'logbooks'
      __table_args__ = (
-          Index('logbook_uuid_idx'),
+          Index('logbook_uuid_idx', 'uuid'),
      )
      uuid = Column(String(64), primary_key=True, nullable=False)
 
@@ -1434,8 +1434,8 @@ class FlowDetails(BASE, NovaBase):
      """
      __tablename__ = 'flowdetails'
      __table_args__ = (
-          Index('flowdetails_ibfk_1',
-                'flowdetails_uuid_idx')
+          Index('flowdetails_ibfk_1', 'parent_uuid'),
+          Index('flowdetails_uuid_idx', 'uuid')
      )
      uuid = Column(String(64), primary_key=True, nullable=False)
 
@@ -1452,8 +1452,8 @@ class TaskDetails(BASE, NovaBase):
      """
      __tablename__ = 'taskdetails'
      __table_args__ = (
-          Index('taskdetails_ibfk_1',
-                'taskdetails_uuid_idx')
+          Index('taskdetails_ibfk_1', 'parent_uuid'),
+          Index('taskdetails_uuid_idx', 'uuid')
      )
      uuid = Column(String(64), primary_key=True, nullable=False)
 

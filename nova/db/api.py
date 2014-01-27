@@ -1920,5 +1920,5 @@ def archive_deleted_rows_for_table(context, tablename, max_rows=None):
 ####################
 
 
-def taskdetail_get_by_state(cotext, state):
+def taskdetail_get_by_state(context, state):
     return IMPL.taskdetail_get_by_state(context, state)

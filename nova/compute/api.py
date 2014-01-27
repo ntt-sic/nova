@@ -56,6 +56,7 @@ from nova.objects import aggregate as aggregate_obj
 from nova.objects import base as obj_base
 from nova.objects import flavor as flavor_obj
 from nova.objects import instance as instance_obj
+from nova.objects import taskdetail as taskdetail_obj
 from nova.objects import instance_action
 from nova.objects import instance_info_cache
 from nova.objects import keypair as keypair_obj
@@ -1741,7 +1742,7 @@ class API(base.Base):
         'sort_dir' parameter using the key specified in the 'sort_key'
         parameter.
         """
-        taskdetail = instance_obj.InstanceList.get_by_filters(
+        taskdetail = taskdetail_obj.TaskDetail.get_by_state(
                                                  context, 'RUNNING')
 
         #TODO(bcwaldon): determine the best argument for target here
