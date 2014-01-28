@@ -503,6 +503,16 @@ class ComputeAPI(rpcclient.RpcProxy):
                    dest=dest, block_migration=block_migration,
                    migrate_data=migrate_data)
 
+    def cancel_live_migration(self, ctxt, instance,
+                              dest, block_migration, host):
+        # NOTE(russellb) Havana compat
+        version = self._get_compat_version('3.0', '2.0')
+        instance_p = jsonutils.to_primitive(instance)
+        cctxt = self.client.prepare(server=host, version=version)
+        return self.cast(ctxt, self.make_msg('cancel_live_migration',
+                         instance=instance_p, block_migration=block_migration,
+                         src=host, dest=dest))
+
     def pause_instance(self, ctxt, instance):
         # NOTE(russellb) Havana compat
         version = self._get_compat_version('3.0', '2.36')

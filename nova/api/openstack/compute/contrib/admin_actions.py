@@ -348,6 +348,29 @@ class AdminActionsController(wsgi.Controller):
 
         return webob.Response(status_int=202)
 
+    @wsgi.action('os-cancel_liveMigrate')
+    def _cancel_live_migrate(self, req_id):
+        """Cancel API to call of migration."""
+
+        # TODO(tani) Need to get instance info at this layer.
+        context = req.environ["nova.context"]
+        authorize(context, 'migrateLive')
+        task_ref = taskflow_base.get_task_by_request_id(
+                            req_id, state='RUNNING')
+        taskflow_base.update_task_details(task_ref.uuid,
+                                          state='CANCELLED')
+
+        try:
+            instance_ref = self.compute_api.get(context, id)
+        except exception.InstanceNotFound:
+            raise exc.HTTPNotFound(_("Instance not found."))
+
+        validation.is_valid_status()
+        validation.is_valid_status()
+        self.compute_api.cancel_live_migration(context, instance)
+
+        return webob.Response(status=202)
+
     @wsgi.action('os-resetState')
     def _reset_state(self, req, id, body):
         """Permit admins to reset the state of a server."""

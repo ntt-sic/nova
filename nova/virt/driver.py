@@ -590,6 +590,18 @@ class ComputeDriver(object):
         """
         raise NotImplementedError()
 
+    def cancel_migration(self, ctxt, instance_ref, network_info,
+                                           block_migration=False,
+                                           block_device_info=None):
+        """Cancel operation while live migration main process.
+
+        :param ctxt: security context
+        :param instance_ref: instance object that is migrated
+        :param network_info: instance network information
+        :param block_migration: if true, post operation of block_migration.
+        """
+        raise NotImplementedError()
+
     def check_instance_shared_storage_local(self, ctxt, instance):
         """Check if instance files located on shared storage.
 

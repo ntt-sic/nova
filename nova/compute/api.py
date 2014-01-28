@@ -71,6 +71,7 @@ from nova.openstack.common import timeutils
 from nova.openstack.common import uuidutils
 import nova.policy
 from nova import quota
+from nova.scheduler import rpcapi as scheduler_rpcapi
 from nova import servicegroup
 from nova import utils
 from nova import volume
@@ -251,6 +252,7 @@ class API(base.Base):
             openstack_driver.get_openstack_security_group_driver())
         self.consoleauth_rpcapi = consoleauth_rpcapi.ConsoleAuthAPI()
         self.compute_rpcapi = compute_rpcapi.ComputeAPI()
+        self.scheduler_rpcapi = scheduler_rpcapi.SchedulerAPI()
         self._compute_task_api = None
         self.servicegroup_api = servicegroup.API()
         self.notifier = notifier.get_notifier('compute', CONF.host)
@@ -2755,6 +2757,27 @@ class API(base.Base):
             with excutils.save_and_reraise_exception():
                 self.volume_api.roll_detaching(context, old_volume['id'])
                 self.volume_api.unreserve_volume(context, new_volume['id'])
+
+    def cancel_live_migration(self, context, instance):
+        """Cancel running live_migration."""
+        cancel_data = self.db.instance_system_metadata_get(context,
+                                                           instance['uuid'])
+        block_migration = cancel_data.get('block_migration')
+        if block_migration == '1' or block_migration == 1 \
+            or block_migration == True:
+            block_migration = True
+        else:
+            block_migration = False
+
+        host = cancel_data.get('src_for_post_migration')
+        dest = cancel_data.get('dest_for_post_migration')
+        try:
+            self.compute_rpcapi.cancel_live_migration(context, instance,
+                                                      dest, block_migration,
+                                                      host)
+        except Exception as e:
+            LOG.warn("Failed to cancel migration.")
+            raise e
 
     @wrap_check_policy
     def attach_interface(self, context, instance, network_id, port_id,

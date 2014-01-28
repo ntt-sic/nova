@@ -4204,6 +4204,52 @@ class ComputeManager(manager.Manager):
                                    block_migration, migrate_data)
 
     @wrap_exception()
+    def cancel_live_migration(self, context, instance,
+                              block_migration, src, dest):
+        """Cancelling live_migration.
+
+        :param context: security context
+        :param instance:
+        :param block_migration:
+        :param src:
+        :param dest:
+        :param req_id: reqest_id which want to cancel
+        """
+        # TODO(tani): how to define taskflow DB?
+        task_ref = taskflow_base.get_task_by_request_id(req_id, state=RUNNING)
+        taskflow_base.update_task_details(task_ref.uuid,
+                                          state=CANCELLED)
+
+        # TODO(tani): how shoud i know instance_id from task uuid?
+        instance = db.get(task_ref.uuid)
+
+        try:
+            if task_ref == 'PreLiveMigrationTask':
+                self.rollback_live_migration(context, instance, dest,
+                                             block_migration,
+                                             instance_not_exist=True)
+            elif task_ref == 'ExecuteLiveMigrationTask' and \
+                    self.driver.has_migration_job(instance):
+                LOG.debug(_("Instance %s has migration job. " + \
+                            "Try to abort migration.") % instance['uuid'])
+                self.driver.abort_migration_job(instance)
+            elif task_ref == 'PostLiveMigrationTask':
+                msg = _("Failed to cancel migrfation.")
+                return msg
+        except exception.InstanceNotFound:
+            pass
+
+    def rollback_live_migration(self, context, instance, dest,
+                                block_migration, instance_not_exist=False,
+                                oneside_src_purge=False):
+        """
+        Rollback migration should be called from rpc directory.
+        """
+        self._rollback_live_migration(context, instance, dest,
+                                      block_migration, instance_not_exist,
+                                      oneside_src_purge=oneside_src_purge)
+
+    @wrap_exception()
     def _post_live_migration(self, ctxt, instance_ref,
                             dest, block_migration=False, migrate_data=None):
         """Post operations for live migration.
@@ -4375,8 +4421,10 @@ class ComputeManager(manager.Manager):
         """
         host = instance['host']
         instance = self._instance_update(context, instance['uuid'],
-                host=host, vm_state=vm_states.ACTIVE,
-                task_state=None, expected_task_state=task_states.MIGRATING)
+                                         host=host,
+                                         vm_state=vm_states.ACTIVE,
+                                         task_state=None,
+                                         expected_task_state=task_states.MIGRATING)
 
         # NOTE(tr3buchet): setup networks on source host (really it's re-setup)
         self.network_api.setup_networks_on_host(context, instance, self.host)

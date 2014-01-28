@@ -29,6 +29,7 @@ from nova.compute import utils as compute_utils
 from nova.compute import vm_states
 from nova.conductor import api as conductor_api
 from nova.conductor.tasks import live_migrate
+from nova.conductor.tasks import cancel_migrate
 from nova import exception
 from nova import manager
 from nova.objects import instance as instance_obj
@@ -129,6 +130,38 @@ class SchedulerManager(manager.Manager):
             block_migration, disk_over_commit):
         task = live_migrate.LiveMigrationTask(context, instance,
                     dest, block_migration, disk_over_commit)
+        return task.execute()
+
+    def cancel_migration(self, context, req_id):
+        try:
+            self._cancel_migration(context, req_id)
+        except (exception.NoValidHost,
+                exception.ComputeServiceUnavailable,
+                exception.InvalidHypervisorType,
+                exception.UnableToMigrateToSelf,
+                exception.InvalidLocalStorage,
+                exception.InvalidSharedStorage,
+                exception.MigrationPreCheckError) as ex:
+            request_spec = {'instance_properties': {
+                'uuid': instance['uuid'], },
+            }
+            with excutils.save_and_reraise_exception():
+                self._set_vm_state_and_notify('live_migration',
+                       dict(vm_state=instance['vm_state'],
+                       task_state=None,
+                       expected_task_state=task_states.MIGRATING,),
+                       context, ex, request_spec)
+        except Exception as ex:
+            request_spec = {'instance_properties': {
+                'uuid': instance['uuid'], },
+            }
+            with excutils.save_and_reraise_exception():
+                self._set_vm_state_and_notify('live_migration',
+                                             {'vm_state': vm_states.ERROR},
+                                             context, ex, request_spec)
+
+    def _cancel_migration(self, context, req_id):
+        task = cancel_migrate.CancelMigrationTask(context, req_id)
         return task.execute()
 
     def run_instance(self, context, request_spec, admin_password,

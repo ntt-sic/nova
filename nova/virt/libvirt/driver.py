@@ -334,6 +334,9 @@ MIN_LIBVIRT_BLOCKIO_VERSION = (0, 10, 2)
 # BlockJobInfo management requirement
 MIN_LIBVIRT_BLOCKJOBINFO_VERSION = (1, 1, 1)
 
+# JobType ID of migration.
+VIR_DOMAIN_JOBTYPE_MIGRATION = 2
+
 
 def libvirt_error_handler(context, err):
     # Just ignore instead of default outputting to stderr.
@@ -4428,6 +4431,32 @@ class LibvirtDriver(driver.ComputeDriver):
             # included in to_xml() result.
             dom = self._lookup_by_name(instance["name"])
             self._conn.defineXML(dom.XMLDesc(0))
+
+    def has_migration_job(self, instance):
+        """Check the specified instance under the migration."""
+        virt_dom = self._lookup_by_name(instance['name'])
+        jobinfo = virt_dom.jobInfo()
+        # jobinfo is a simple list.
+        return jobinfo[0] == VIR_DOMAIN_JOBTYPE_MIGRATION
+
+    def abort_migration_job(self, instance):
+        """Abort migrtion and wait to the end of abort."""
+        try:
+            virt_dom = self._lookup_by_name(instance['name'])
+            virt_dom.abortJob()
+        except libvirt.libvirtError as e:
+            LOG.error("Failed to abort migration job. Suspend rollback.")
+            raise e
+
+        def _wait_for_abort():
+            try:
+                if not self.has_migration_job(instance):
+                    raise utils.LoopingCallDone()
+            except libvirt.libvirtError as e:
+                self.power_on(instance)
+
+        timer = utils.LoopingCall(_wait_for_abort)
+        timer.start(interval=0.5).wait()
 
     def get_instance_disk_info(self, instance_name, xml=None,
                                block_device_info=None):

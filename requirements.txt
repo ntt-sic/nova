@@ -16,6 +16,7 @@ Paste
 sqlalchemy-migrate>=0.8.2
 netaddr>=0.7.6
 suds>=0.4
+taskflow>=0.1.1,<0.2
 paramiko>=1.8.0
 pyasn1
 Babel>=1.3
