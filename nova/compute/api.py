@@ -1730,6 +1730,11 @@ class API(base.Base):
             instance = obj_base.obj_to_primitive(instance)
         return instance
 
+    def get_instance_by_task(self, context, task_id):
+        """Get instance by specified task_id."""
+        pass
+
+
     def get_all(self, context, search_opts=None, sort_key='created_at',
                 sort_dir='desc', limit=None, marker=None, want_objects=False):
         """Get all instances filtered by one of the given parameters.
@@ -1744,8 +1749,6 @@ class API(base.Base):
         'sort_dir' parameter using the key specified in the 'sort_key'
         parameter.
         """
-        taskdetail = taskdetail_obj.TaskDetail.get_by_state(
-                                                 context, 'RUNNING')
 
         #TODO(bcwaldon): determine the best argument for target here
         target = {
@@ -2760,6 +2763,11 @@ class API(base.Base):
 
     def cancel_live_migration(self, context, instance):
         """Cancel running live_migration."""
+        task_ref = taskdetail_obj.TaskDetail.get_by_state(
+                                    context, instance, 'RUNNING')
+        #taskflow_base.update_task_details(task_ref.uuid,
+        #                                  state='CANCELLED')
+
         cancel_data = self.db.instance_system_metadata_get(context,
                                                            instance['uuid'])
         block_migration = cancel_data.get('block_migration')

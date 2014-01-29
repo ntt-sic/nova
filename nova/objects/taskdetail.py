@@ -45,6 +45,9 @@ class TaskDetail(base.NovaPersistentObject, base.NovaObject):
         db_task_details = db.taskdetail_get_by_state(context, state)
         return cls._from_db_object(context, cls(), db_task_details)
 
+    @base.remotable_classmethod
+    def update_task_state(cls, conttext, state):
+
     #@base.remotable
     #def create(self, context):
     #    updates = self.obj_get_changes()

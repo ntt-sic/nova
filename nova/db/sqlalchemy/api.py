@@ -6058,10 +6058,21 @@ def pci_device_update(context, node_id, address, values):
 
 
 @require_admin_context
-def taskdetail_get_by_state(context, state):
+def taskdetail_get_by_state(context, instance_id, state):
     taskdetail_ref = model_query(context, models.TaskDetails).\
+                                 filter_by(instance_id=instance_id).\
                                  filter_by(state=state).\
                                  first()
     if not taskdetail_ref:
         raise exception.TaskDetailNotFoundByState(state=state)
     return taskdetail_ref
+
+
+@require_admin_context
+def instance_task_get_by_task_id(context, task_id):
+    inst_task_ref = model_query(context, models.InstanceTask).\
+                                filter_by(task=task_id).\
+                                first()
+    if not inst_task_ref:
+        raise exception.InstanceTaskNotFoundByTaskId(task=task_id)
+    return instance_task_ref

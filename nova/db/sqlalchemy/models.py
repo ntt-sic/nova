@@ -1464,3 +1464,23 @@ class TaskDetails(BASE, NovaBase):
      version = Column(String(64))
      state = Column(String(255))
      failure = Column(Text)
+
+
+class InstanceTask(BASE, NovaBase):
+    """
+    Represents instance_task of TaskAPI.
+    """
+    __tablename__ = 'instance_tasks'
+
+    id = Column(Integer(11), primary_key=True, nullable=False)
+
+    name = Column(String(255))
+    state = Column(String(255))
+    uuid = Column(String(64), nullable=False)
+    instance_uuid = Column(String(64))
+    tag = Column(String(64), nullable=False)
+    user_id = Column(String(255), nullable=False)
+    project_id = Column(String(255), nullable=False)
+    error_message = Column(String(255))
+    start_time = Column(DateTime, default=timeutils.utcnow)
+    finish_time = Column(DateTime)

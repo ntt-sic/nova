@@ -66,6 +66,7 @@ from nova.objects import base as obj_base
 from nova.objects import instance as instance_obj
 from nova.objects import migration as migration_obj
 from nova.objects import quotas as quotas_obj
+from nova.objects import taskdetails as taskdetails_obj
 from nova.openstack.common import excutils
 from nova.openstack.common.gettextutils import _
 from nova.openstack.common import jsonutils
@@ -4213,27 +4214,29 @@ class ComputeManager(manager.Manager):
         :param block_migration:
         :param src:
         :param dest:
-        :param req_id: reqest_id which want to cancel
+        #:param req_id: reqest_id which want to cancel
         """
         # TODO(tani): how to define taskflow DB?
-        task_ref = taskflow_base.get_task_by_request_id(req_id, state=RUNNING)
+        task_ref = taskflow_base.get_task_by_state(req_id, state=RUNNING)
         taskflow_base.update_task_details(task_ref.uuid,
                                           state=CANCELLED)
 
         # TODO(tani): how shoud i know instance_id from task uuid?
-        instance = db.get(task_ref.uuid)
+        instance = instance_obj.Instance._from_db_object(
+                   context, instance_obj.Instance(), instance_or_dict,
+                   expected_attrs=metas)
 
         try:
-            if task_ref == 'PreLiveMigrationTask':
+            if task_ref.name == 'pre_migration':
                 self.rollback_live_migration(context, instance, dest,
                                              block_migration,
                                              instance_not_exist=True)
-            elif task_ref == 'ExecuteLiveMigrationTask' and \
+            elif task_ref == 'migration' and \
                     self.driver.has_migration_job(instance):
                 LOG.debug(_("Instance %s has migration job. " + \
                             "Try to abort migration.") % instance['uuid'])
                 self.driver.abort_migration_job(instance)
-            elif task_ref == 'PostLiveMigrationTask':
+            elif task_ref == 'post_migration':
                 msg = _("Failed to cancel migrfation.")
                 return msg
         except exception.InstanceNotFound:

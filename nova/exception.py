@@ -1498,3 +1498,7 @@ class InvalidVideoMode(Invalid):
 
 class TaskDetailNotFoundByState(NotFound):
     msg_fmt = _("Taskdetail match to %(state) is not found")
+
+
+class InstanceTaskNotFoundByTaskId(NotFound):
+    msg_fmt = _("InstanceTask match to %(task) is not found")
