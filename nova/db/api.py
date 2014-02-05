@@ -1922,3 +1922,25 @@ def archive_deleted_rows_for_table(context, tablename, max_rows=None):
 
 def taskdetail_get_by_state(context, state):
     return IMPL.taskdetail_get_by_state(context, state)
+
+
+####################
+
+
+def instance_task_get(context, task_uuid):
+    return IMPL.instance_task_get(context, task_uuid)
+
+
+def instance_tasks_get_by_instance_uuid(context, instance_uuid):
+    return IMPL.instance_tasks_get_by_instance_uuid(context, instance_uuid)
+
+
+def instance_task_create(context, values):
+    return IMPL.instance_task_create(context, values)
+
+
+def instance_task_update(context, task_uuid, values):
+    return IMPL.instance_task_update(context, task_uuid, values)
+
+
+####################

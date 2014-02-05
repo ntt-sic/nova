@@ -1500,5 +1500,5 @@ class TaskDetailNotFoundByState(NotFound):
     msg_fmt = _("Taskdetail match to %(state) is not found")
 
 
-class InstanceTaskNotFoundByTaskId(NotFound):
-    msg_fmt = _("InstanceTask match to %(task) is not found")
+class InstanceTaskNotFound(NovaException):
+    msg_fmt = _("Task %(task_uuid)s was not found")

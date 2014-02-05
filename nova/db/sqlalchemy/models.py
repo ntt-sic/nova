@@ -1467,20 +1467,22 @@ class TaskDetails(BASE, NovaBase):
 
 
 class InstanceTask(BASE, NovaBase):
-    """
-    Represents instance_task of TaskAPI.
-    """
+    """Track tasks to be completed on an instance."""
+
     __tablename__ = 'instance_tasks'
+    __table_args__ = (
+        Index('uuid_idx', 'uuid'),
+        Index('instance_uuid_idx', 'instance_uuid')
+    )
 
-    id = Column(Integer(11), primary_key=True, nullable=False)
-
-    name = Column(String(255))
-    state = Column(String(255))
-    uuid = Column(String(64), nullable=False)
-    instance_uuid = Column(String(64))
-    tag = Column(String(64), nullable=False)
-    user_id = Column(String(255), nullable=False)
-    project_id = Column(String(255), nullable=False)
-    error_message = Column(String(255))
+    id = Column(Integer, primary_key=True, nullable=False, autoincrement=True)
+    name = Column(String(255), nullable=False)
+    status = Column(String(255), nullable=False)
+    uuid = Column(String(36), nullable=False)
+    instance_uuid = Column(String(36),
+                           ForeignKey('instances.uuid'))
+    tag = Column(String(255))
+    user_id = Column(String(255))
+    project_id = Column(String(255))
     start_time = Column(DateTime, default=timeutils.utcnow)
     finish_time = Column(DateTime)
