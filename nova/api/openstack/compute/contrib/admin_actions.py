@@ -24,6 +24,7 @@ from nova.api.openstack import wsgi
 from nova import compute
 from nova.compute import vm_states
 from nova import exception
+from nova.objects import instance_task
 from nova.openstack.common.gettextutils import _
 from nova.openstack.common import log as logging
 from nova.openstack.common import strutils
@@ -349,18 +350,19 @@ class AdminActionsController(wsgi.Controller):
         return webob.Response(status_int=202)
 
     @wsgi.action('os-cancel_liveMigrate')
-    def _cancel_live_migrate(self, task_id):
+    def _cancel_live_migrate(self, req, task_id):
         """Cancel API to call of migration."""
 
-        # TODO(tani) Need to get instance info at this layer.
-        context = req.environ["nova.context"]
+        context = req.environ['nova.context']
         authorize(context, 'cancelLivemigrate')
 
         try:
-            instance = self.compute_api.get_instance_by_task(context, task_id)
-        except exception.InstanceTaskNotFoundByTaskId:
-            raise exc.HTTPNotFound(_("Instance not found."))
+            task_ref = instance_task.InstanceTask.get_by_uuid(
+                                context, task_id)
+        except exception.InstanceTaskNotFound as err:
+            raise exc.HTTPNotFound(explanation=err.format_message())
 
+        instance = task_ref.instance_uuid
         self.compute_api.cancel_live_migration(context, instance)
 
         return webob.Response(status=202)

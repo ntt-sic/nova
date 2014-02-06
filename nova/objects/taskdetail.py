@@ -15,6 +15,7 @@
 from nova import db
 from nova.objects import base
 from nova.objects import fields
+from nova.objects import instance as instance_obj
 
 
 class TaskDetail(base.NovaPersistentObject, base.NovaObject):

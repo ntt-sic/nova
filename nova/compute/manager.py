@@ -66,7 +66,7 @@ from nova.objects import base as obj_base
 from nova.objects import instance as instance_obj
 from nova.objects import migration as migration_obj
 from nova.objects import quotas as quotas_obj
-from nova.objects import taskdetails as taskdetails_obj
+from nova.objects import taskdetail as taskdetail_obj
 from nova.openstack.common import excutils
 from nova.openstack.common.gettextutils import _
 from nova.openstack.common import jsonutils
@@ -4214,11 +4214,9 @@ class ComputeManager(manager.Manager):
         :param block_migration:
         :param src:
         :param dest:
-        #:param req_id: reqest_id which want to cancel
         """
-        # TODO(tani): how to define taskflow DB?
-        task_ref = taskflow_base.get_task_by_state(req_id, state=RUNNING)
-        taskflow_base.update_task_details(task_ref.uuid,
+        task_ref = taskdetail_obj.get_task_by_state(req_id, state=RUNNING)
+        taskdetail_obj.update_task_details(task_ref.uuid,
                                           state=CANCELLED)
 
         # TODO(tani): how shoud i know instance_id from task uuid?

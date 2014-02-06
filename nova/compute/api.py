@@ -2768,8 +2768,8 @@ class API(base.Base):
         #taskflow_base.update_task_details(task_ref.uuid,
         #                                  state='CANCELLED')
 
-        cancel_data = self.db.instance_system_metadata_get(context,
-                                                           instance['uuid'])
+        cancel_data = self.db.instance_system_metadata_get(
+                                context, instance['uuid'])
         block_migration = cancel_data.get('block_migration')
         if block_migration == '1' or block_migration == 1 \
             or block_migration == True:
