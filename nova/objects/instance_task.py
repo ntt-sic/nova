@@ -23,16 +23,15 @@ class InstanceTask(base.NovaPersistentObject, base.NovaObject):
 
     fields = {
         'id': fields.IntegerField(),
-        'name': fields.StringField(),
+        'task': fields.StringField(),
         'state': fields.StringField(),
         'uuid': fields.UUID(),
         'instance_uuid': fields.UUID(),
         'tag': fields.StringField(nullable=False),
         'user_id': fields.StringField(nullable=False),
         'project_id': fields.StringField(nullable=False),
-        'error_message': fields.StringField(nullable=False),
         'start_time': fields.DateTimeField(nullable=False),
-        'finish_time': fields.DateTimeField(nullable=False),
+        'finish_time': fields.DateTimeField(nullable=True),
         }
 
     @staticmethod
@@ -44,8 +43,9 @@ class InstanceTask(base.NovaPersistentObject, base.NovaObject):
         return task
 
     @base.remotable_classmethod
-    def get_by_uuid(cls, context, task_uuid):
-        db_task = db.instance_task_get(context, task_uuid)
+    def get_by_instance_and_uuid(cls, context, instance_uuid, task_uuid):
+        db_task = db.instance_task_get_by_instance_and_uuid(context,
+                instance_uuid, task_uuid)
         return cls._from_db_object(context, cls(), db_task)
 
     @base.remotable
@@ -77,4 +77,9 @@ class InstanceTaskList(base.ObjectListBase, base.NovaObject):
     def get_by_instance_uuid(cls, context, instance_uuid):
         db_tasks = db.instance_tasks_get_by_instance_uuid(context,
                 instance_uuid)
+        return base.obj_make_list(context, cls(), InstanceTask, db_tasks)
+
+    @base.remotable_classmethod
+    def get_by_filters(cls, context, filters):
+        db_tasks = db.instance_tasks_get_by_filters(context, filters)
         return base.obj_make_list(context, cls(), InstanceTask, db_tasks)

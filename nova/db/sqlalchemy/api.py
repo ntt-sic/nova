@@ -5419,6 +5419,67 @@ def action_event_get_by_id(context, action_id, event_id):
 ##################
 
 
+def instance_task_get_by_instance_and_uuid(context, instance_uuid, task_uuid):
+    task_ref = model_query(context, models.InstanceTask).filter_by(
+            instance_uuid=instance_uuid).filter_by(uuid=task_uuid).first()
+    return task_ref
+
+
+def instance_tasks_get_by_instance_uuid(context, instance_uuid):
+    tasks = model_query(context, models.InstanceTask).filter_by(
+            instance_uuid=instance_uuid).order_by(desc('created_at'),
+                    desc('id')).all()
+    return tasks
+
+
+def instance_tasks_get_by_filters(context, filters):
+    query = model_query(context, models.InstanceTask)
+
+    # By default this should filter by project_id, it must be opted out of.
+    # If the context is admin and the project_id filter is set to None then
+    # filtering by project_id is bypassed.
+    if not context.is_admin:
+        query = query.filter_by(project_id=context.project_id)
+    else:
+        if 'project_id' not in filters:
+            query = query.filter_by(project_id=context.project_id)
+        elif filters['project_id'] is not None:
+            query = query.filter_by(project_id=filters['project_id'])
+
+    if 'task' in filters:
+        query = query.filter_by(task=filters['task'])
+    if 'state' in filters:
+        query = query.filter_by(state=filters['state'])
+    if 'tag' in filters:
+        query = query.filter_by(tag=filters['tag'])
+
+    tasks = query.order_by(desc('created_at'), desc('id')).all()
+    return tasks
+
+
+def instance_task_create(context, values):
+    task_ref = models.InstanceTask()
+    task_ref.update(values)
+    task_ref.save()
+    return task_ref
+
+
+def instance_task_update(context, task_uuid, values):
+    session = get_session()
+    with session.begin():
+        task_ref = model_query(context, models.InstanceTask,
+                session=session).filter_by(uuid=task_uuid).first()
+
+        if not task_ref:
+            raise exception.InstanceTaskNotFound(task_uuid=task_uuid)
+
+        task_ref.update(values)
+    return task_ref
+
+
+##################
+
+
 @require_context
 def ec2_instance_create(context, instance_uuid, id=None):
     """Create ec2 compatible instance by provided uuid."""
@@ -6057,6 +6118,9 @@ def pci_device_update(context, node_id, address, values):
     return device
 
 
+##################
+
+
 @require_admin_context
 def taskdetail_get_by_state(context, instance_id, state):
     taskdetail_ref = model_query(context, models.TaskDetails).\
@@ -6066,42 +6130,3 @@ def taskdetail_get_by_state(context, instance_id, state):
     if not taskdetail_ref:
         raise exception.TaskDetailNotFoundByState(state=state)
     return taskdetail_ref
-
-
-##################
-
-
-def instance_task_get(context, task_uuid):
-    task_ref = model_query(context, models.InstanceTask).filter_by(
-            uuid=task_uuid).first()
-    return task_ref
-
-
-def instance_tasks_get_by_instance_uuid(context, instance_uuid):
-    tasks = model_query(context, models.InstanceTask).filter_by(
-            instance_uuid=instance_uuid).order_by(desc('created_at'),
-                    desc('id')).all()
-    return tasks
-
-
-def instance_task_create(context, values):
-    task_ref = models.InstanceTask()
-    task_ref.update(values)
-    task_ref.save()
-    return task_ref
-
-
-def instance_task_update(context, task_uuid, values):
-    session = get_session()
-    with session.begin():
-        task_ref = model_query(context, models.InstanceTask,
-                session=session).filter_by(uuid=task_uuid).first()
-
-        if not task_ref:
-            raise exception.InstanceTaskNotFound(task_uuid=task_uuid)
-
-        task_ref.update(values)
-    return task_ref
-
-
-##################

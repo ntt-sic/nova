@@ -1253,6 +1253,27 @@ class InstanceActionEvent(BASE, NovaBase):
     traceback = Column(Text)
 
 
+class InstanceTask(BASE, NovaBase):
+    """Track tasks to be completed on an instance."""
+
+    __tablename__ = 'instance_tasks'
+    __table_args__ = (
+        Index('instance_task_uuid_idx', 'uuid'),
+        Index('instance_task_instance_uuid_idx', 'instance_uuid')
+    )
+
+    id = Column(Integer, primary_key=True, nullable=False, autoincrement=True)
+    task = Column(String(255), nullable=False)
+    state = Column(String(255), nullable=False)
+    uuid = Column(String(36), nullable=False)
+    instance_uuid = Column(String(36), ForeignKey('instances.uuid'))
+    tag = Column(String(255))
+    user_id = Column(String(255))
+    project_id = Column(String(255))
+    start_time = Column(DateTime, default=timeutils.utcnow)
+    finish_time = Column(DateTime)
+
+
 class InstanceIdMapping(BASE, NovaBase):
     """Compatibility layer for the EC2 instance service."""
     __tablename__ = 'instance_id_mappings'
@@ -1464,25 +1485,3 @@ class TaskDetails(BASE, NovaBase):
      version = Column(String(64))
      state = Column(String(255))
      failure = Column(Text)
-
-
-class InstanceTask(BASE, NovaBase):
-    """Track tasks to be completed on an instance."""
-
-    __tablename__ = 'instance_tasks'
-    __table_args__ = (
-        Index('uuid_idx', 'uuid'),
-        Index('instance_uuid_idx', 'instance_uuid')
-    )
-
-    id = Column(Integer, primary_key=True, nullable=False, autoincrement=True)
-    name = Column(String(255), nullable=False)
-    status = Column(String(255), nullable=False)
-    uuid = Column(String(36), nullable=False)
-    instance_uuid = Column(String(36),
-                           ForeignKey('instances.uuid'))
-    tag = Column(String(255))
-    user_id = Column(String(255))
-    project_id = Column(String(255))
-    start_time = Column(DateTime, default=timeutils.utcnow)
-    finish_time = Column(DateTime)
