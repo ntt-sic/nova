@@ -4219,11 +4219,6 @@ class ComputeManager(manager.Manager):
         taskdetail_obj.update_task_details(task_ref.uuid,
                                           state=CANCELLED)
 
-        # TODO(tani): how shoud i know instance_id from task uuid?
-        instance = instance_obj.Instance._from_db_object(
-                   context, instance_obj.Instance(), instance_or_dict,
-                   expected_attrs=metas)
-
         try:
             if task_ref.name == 'pre_migration':
                 self.rollback_live_migration(context, instance, dest,

@@ -349,12 +349,12 @@ class AdminActionsController(wsgi.Controller):
 
         return webob.Response(status_int=202)
 
-    @wsgi.action('os-cancel_liveMigrate')
+    @wsgi.action('os-cancelMigrate')
     def _cancel_live_migrate(self, req, task_id):
         """Cancel API to call of migration."""
 
         context = req.environ['nova.context']
-        authorize(context, 'cancelLivemigrate')
+        authorize(context, 'cancelMigrate')
 
         try:
             task_ref = instance_task.InstanceTask.get_by_uuid(
