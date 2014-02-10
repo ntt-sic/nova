@@ -29,7 +29,6 @@ from nova.compute import utils as compute_utils
 from nova.compute import vm_states
 from nova.conductor import api as conductor_api
 from nova.conductor.tasks import live_migrate
-from nova.conductor.tasks import cancel_migrate
 from nova import exception
 from nova import manager
 from nova.objects import instance as instance_obj
@@ -159,10 +158,6 @@ class SchedulerManager(manager.Manager):
                 self._set_vm_state_and_notify('live_migration',
                                              {'vm_state': vm_states.ERROR},
                                              context, ex, request_spec)
-
-    def _cancel_migration(self, context, req_id):
-        task = cancel_migrate.CancelMigrationTask(context, req_id)
-        return task.execute()
 
     def run_instance(self, context, request_spec, admin_password,
             injected_files, requested_networks, is_first_time,
