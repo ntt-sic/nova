@@ -1927,12 +1927,16 @@ def taskdetail_get_by_state(context, state):
 ####################
 
 
-def instance_task_get(context, task_uuid):
-    return IMPL.instance_task_get(context, task_uuid)
+def instance_task_get_by_instance_and_uuid(context, instance_uuid, task_uuid):
+    return IMPL.instance_task_get_by_instance_and_uuid(context, instance_uuid, task_uuid)
 
 
 def instance_tasks_get_by_instance_uuid(context, instance_uuid):
     return IMPL.instance_tasks_get_by_instance_uuid(context, instance_uuid)
+
+
+def instance_tasks_get_by_filters(context, filters):
+    return IMPL.instance_tasks_get_by_filters(context, filters)
 
 
 def instance_task_create(context, values):

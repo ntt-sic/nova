@@ -6122,9 +6122,8 @@ def pci_device_update(context, node_id, address, values):
 
 
 @require_admin_context
-def taskdetail_get_by_state(context, instance_id, state):
+def taskdetail_get_by_state(context, state):
     taskdetail_ref = model_query(context, models.TaskDetails).\
-                                 filter_by(instance_id=instance_id).\
                                  filter_by(state=state).\
                                  first()
     if not taskdetail_ref:

@@ -2761,15 +2761,16 @@ class API(base.Base):
                 self.volume_api.roll_detaching(context, old_volume['id'])
                 self.volume_api.unreserve_volume(context, new_volume['id'])
 
-    def cancel_live_migration(self, context, instance):
+    def cancel_live_migration(self, context, id):
         """Cancel running live_migration."""
         task_ref = taskdetail_obj.TaskDetail.get_by_state(
-                                    context, instance, 'RUNNING')
+                                    context, 'RUNNING')
         #taskflow_base.update_task_details(task_ref.uuid,
         #                                  state='CANCELLED')
+        instance = self.get(context, id, want_objects=True)
 
-        cancel_data = self.db.instance_system_metadata_get(
-                                context, instance['uuid'])
+        import pdb; pdb.set_trace()
+
         block_migration = cancel_data.get('block_migration')
         if block_migration == '1' or block_migration == 1 \
             or block_migration == True:
@@ -2780,7 +2781,7 @@ class API(base.Base):
         host = cancel_data.get('src_for_post_migration')
         dest = cancel_data.get('dest_for_post_migration')
         try:
-            self.compute_rpcapi.cancel_live_migration(context, instance,
+            self.compute_rpcapi.cancel_live_migration(context, id,
                                                       dest, block_migration,
                                                       host)
         except Exception as e:

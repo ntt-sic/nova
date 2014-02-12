@@ -350,20 +350,21 @@ class AdminActionsController(wsgi.Controller):
         return webob.Response(status_int=202)
 
     @wsgi.action('os-cancelMigrate')
-    def _cancel_live_migrate(self, req, task_id):
+    def _cancel_live_migrate(self, req, id, body):
         """Cancel API to call of migration."""
 
         context = req.environ['nova.context']
         authorize(context, 'cancelMigrate')
 
         try:
-            task_ref = instance_task.InstanceTask.get_by_uuid(
-                                context, task_id)
+            task_id = body["os-cancelMigrate"]["uuid"]
+            task_ref = instance_task.InstanceTask.get_by_instance_and_uuid(
+                                context, id, task_id)
         except exception.InstanceTaskNotFound as err:
             raise exc.HTTPNotFound(explanation=err.format_message())
 
         instance = task_ref.instance_uuid
-        self.compute_api.cancel_live_migration(context, instance)
+        self.compute_api.cancel_live_migration(context, id)
 
         return webob.Response(status=202)
 
