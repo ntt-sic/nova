@@ -870,6 +870,8 @@ class API(base.Base):
                     volume_id = bdm['volume_id']
                     volume = self.volume_api.get(context, volume_id)
                     return volume.get('volume_image_metadata', {})
+                except exception.CinderConnectionFailed:
+                    raise
                 except Exception:
                     raise exception.InvalidBDMVolume(id=volume_id)
 
@@ -1114,11 +1116,15 @@ class API(base.Base):
                     self.volume_api.check_attach(context,
                                                  volume,
                                                  instance=instance)
+                except exception.CinderConnectionFailed:
+                    raise
                 except Exception:
                     raise exception.InvalidBDMVolume(id=volume_id)
             elif snapshot_id is not None:
                 try:
                     self.volume_api.get_snapshot(context, snapshot_id)
+                except exception.CinderConnectionFailed:
+                    raise
                 except Exception:
                     raise exception.InvalidBDMSnapshot(id=snapshot_id)
 
@@ -1273,7 +1279,7 @@ class API(base.Base):
         try:
             self._populate_instance_for_bdm(context, instance,
                     instance_type, image, block_device_mapping)
-        except exception.InvalidBDM:
+        except (exception.CinderConnectionFailed, exception.InvalidBDM):
             with excutils.save_and_reraise_exception():
                 instance.destroy(context)
 

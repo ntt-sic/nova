@@ -161,6 +161,11 @@ class GlanceConnectionFailed(NovaException):
         "%(reason)s")
 
 
+class CinderConnectionFailed(NovaException):
+    msg_fmt = _("Connection to cinder host failed: %(reason)s")
+    code = 503
+
+
 class NotAuthorized(NovaException):
     ec2_code = 'AuthFailure'
     msg_fmt = _("Not authorized.")
