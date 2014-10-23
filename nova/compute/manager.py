@@ -4493,26 +4493,30 @@ class ComputeManager(manager.Manager):
 
         @utils.synchronized(instance['uuid'])
         def do_reserve():
-            bdms = (
-                objects.BlockDeviceMappingList.get_by_instance_uuid(
-                    context, instance.uuid))
-
-            device_name = compute_utils.get_device_name_for_instance(
-                    context, instance, bdms, device)
-
-            # NOTE(vish): create bdm here to avoid race condition
-            bdm = objects.BlockDeviceMapping(
-                    source_type='volume', destination_type='volume',
-                    instance_uuid=instance.uuid,
-                    volume_id=volume_id or 'reserved',
-                    device_name=device_name,
-                    disk_bus=disk_bus, device_type=device_type)
-            bdm.create(context)
-
-            if return_bdm_object:
-                return bdm
+            volume = self.volume_api.get(context, volume_id)
+            if volume['attach_status'] == 'attaching':
+                LOG.info("Volume %s is already attaching status.", volume_id)
             else:
-                return device_name
+                bdms = (
+                    objects.BlockDeviceMappingList.get_by_instance_uuid(
+                        context, instance.uuid))
+
+                device_name = compute_utils.get_device_name_for_instance(
+                        context, instance, bdms, device)
+
+                # NOTE(vish): create bdm here to avoid race condition
+                bdm = objects.BlockDeviceMapping(
+                        source_type='volume', destination_type='volume',
+                        instance_uuid=instance.uuid,
+                        volume_id=volume_id or 'reserved',
+                        device_name=device_name,
+                        disk_bus=disk_bus, device_type=device_type)
+                bdm.create(context)
+
+                if return_bdm_object:
+                    return bdm
+                else:
+                    return device_name
 
         return do_reserve()
 
@@ -4554,7 +4558,6 @@ class ComputeManager(manager.Manager):
                               {'volume_id': bdm.volume_id,
                                'mountpoint': bdm['mount_device']},
                               context=context, instance=instance)
-                self.volume_api.unreserve_volume(context, bdm.volume_id)
 
         info = {'volume_id': bdm.volume_id}
         self._notify_about_instance_usage(

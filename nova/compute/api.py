@@ -2914,18 +2914,20 @@ class API(base.Base):
         #             the same time. When db access is removed from
         #             compute, the bdm will be created here and we will
         #             have to make sure that they are assigned atomically.
-        volume_bdm = self.compute_rpcapi.reserve_block_device_name(
-            context, instance, device, volume_id, disk_bus=disk_bus,
-            device_type=device_type)
         try:
             volume = self.volume_api.get(context, volume_id)
             self.volume_api.check_attach(context, volume, instance=instance)
             self.volume_api.reserve_volume(context, volume_id)
+            volume_bdm = self.compute_rpcapi.reserve_block_device_name(
+                context, instance, device, volume_id, disk_bus=disk_bus,
+                device_type=device_type)
             self.compute_rpcapi.attach_volume(context, instance=instance,
                     volume_id=volume_id, mountpoint=device, bdm=volume_bdm)
         except Exception:
-            with excutils.save_and_reraise_exception():
-                volume_bdm.destroy(context)
+            if volume_bdm:
+                with excutils.save_and_reraise_exception():
+                    volume_bdm.destroy(context)
+            self.volume_api.unreserve_volume(context, volume_id)
 
         return volume_bdm.device_name
 
